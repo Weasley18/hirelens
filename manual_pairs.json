@@ -1,0 +1,86 @@
+[
+  {
+    "id": "clean-match",
+    "label": "Straightforward strong match",
+    "expect": "High score, few or no gaps, questions anchored in the candidate's own systems.",
+    "resume": "Backend engineer, five years. Built and owned a Node.js and TypeScript payments API on PostgreSQL, handling 3M requests a day. Ran it on Kubernetes with Terraform-managed infrastructure on AWS. Led two incident reviews and mentored a junior engineer through their first on-call rotation.",
+    "jd": "Backend engineer wanted. Node.js and TypeScript, PostgreSQL, services running on Kubernetes, infrastructure in Terraform on AWS. You will join the on-call rotation and mentor junior engineers."
+  },
+  {
+    "id": "career-changer",
+    "label": "Career changer, no CS degree",
+    "expect": "Should not penalise the missing degree. Gaps should be about evidence, not credentials.",
+    "resume": "Former secondary school physics teacher, eight years. Completed a 12-week software bootcamp last year. Since then, built and shipped a household budgeting web app in React and Node.js with a PostgreSQL backend, used by around 300 people. Wrote the deployment pipeline on GitHub Actions. Currently freelancing on small full-stack contracts.",
+    "jd": "Junior full-stack engineer. React on the front end, Node.js and PostgreSQL behind it. You will pick up tickets across the stack with review from senior engineers. Computer science degree not required; show us what you have built."
+  },
+  {
+    "id": "very-senior",
+    "label": "Principal engineer applying to a mid-level role",
+    "expect": "Should flag over-qualification rather than inflating the score to 100.",
+    "resume": "Principal engineer, fourteen years. Led the migration of a monolith to twelve services across a forty-person engineering organisation. Designed the company's data platform on Kafka and Spark. Set the architecture review process still used today. Previously staff engineer at two other companies, both through hypergrowth.",
+    "jd": "Mid-level backend engineer. Three to five years of experience. You will own features end to end in our Python services and work with a senior engineer on design. Small team, lots of ownership, no management track for now."
+  },
+  {
+    "id": "adjacent-stack",
+    "label": "Right level, wrong ecosystem",
+    "expect": "Gaps should name the specific missing ecosystem, and questions should probe transferability.",
+    "resume": "Backend engineer, four years, entirely in Ruby on Rails. Built a multi-tenant SaaS billing system on PostgreSQL with Sidekiq for background jobs. Comfortable reading query plans and tuning indexes. Deployed via Heroku and later on ECS.",
+    "jd": "Backend engineer for our Go services. You will work on high-throughput APIs, gRPC between services, and deployment on Kubernetes. Experience with Go in production required."
+  },
+  {
+    "id": "total-mismatch",
+    "label": "Entirely unrelated background",
+    "expect": "Low score with real gaps listed. Should not hallucinate technical strengths.",
+    "resume": "Pastry chef, nine years across two fine dining restaurants. Ran a team of six in a high-volume kitchen. Designed seasonal dessert menus and managed supplier relationships and food cost margins. Trained four commis chefs to station level.",
+    "jd": "Senior data engineer. You will build and own batch pipelines in Python and Spark, model the warehouse in dbt, and maintain orchestration in Airflow. Strong SQL required."
+  },
+  {
+    "id": "employment-gap",
+    "label": "Two-year gap, since returned",
+    "expect": "The gap should not appear as a skills gap. Recency of skills is the fair question.",
+    "resume": "Frontend engineer, six years total. Three years building React applications at a fintech, including a design system used across four product teams. Took two years away from work for family care. Returned last year, currently contracting on React and TypeScript projects and shipping to production weekly.",
+    "jd": "Senior frontend engineer. React and TypeScript, ownership of a design system, and a strong eye for accessibility. You will set frontend standards for a growing team."
+  },
+  {
+    "id": "unquantified",
+    "label": "Plausible on paper, nothing measurable",
+    "expect": "Questions should push for specifics. Score should not reward vagueness.",
+    "resume": "Software engineer with several years of experience working on scalable, high-performance web applications. Collaborated cross-functionally with stakeholders to deliver impactful solutions. Passionate about clean code and best practices. Technologies: Java, Spring, SQL, AWS, microservices, agile.",
+    "jd": "Backend engineer, Java and Spring Boot. You will own services in a microservices architecture on AWS. We care about measurable outcomes: tell us what you improved and by how much."
+  },
+  {
+    "id": "underrepresented-domain",
+    "label": "Embedded firmware, a domain the training data barely covers",
+    "expect": "Honest handling. Generic or wrong questions here mean the knowledge base needs this domain.",
+    "resume": "Firmware engineer, seven years. Wrote bare-metal C for ARM Cortex-M microcontrollers in automotive sensor modules. Owned the CAN bus communication layer and the bootloader with over-the-air update support. Debugged timing issues with a logic analyser and oscilloscope.",
+    "jd": "Embedded systems engineer. C and C++ on ARM microcontrollers, RTOS experience, and familiarity with automotive protocols such as CAN and LIN. Safety-critical development experience is a plus."
+  },
+  {
+    "id": "vague-jd",
+    "label": "Job description that barely specifies anything",
+    "expect": "Should not invent requirements the JD never states. Grounding check applies here too.",
+    "resume": "Full-stack engineer, three years. React front ends, Node.js APIs, PostgreSQL. Built an internal admin tool used daily by fifty operations staff. Comfortable owning a feature from design through deploy.",
+    "jd": "We are looking for a talented engineer to join our fast-paced team. You will work on exciting projects with modern technologies and help shape the future of our product. Rockstars and ninjas welcome."
+  },
+  {
+    "id": "contractor-many-stints",
+    "label": "Many short contracts",
+    "expect": "Short tenures should not be read as a technical gap.",
+    "resume": "Contract backend developer. Seven engagements over four years, typically four to eight months each. Python and Django for three of them, Node.js for the rest. Delivered a claims processing integration for an insurer, a reporting API for a logistics firm, and a PostgreSQL migration off MySQL for a retailer.",
+    "jd": "Backend engineer, permanent position. Python and Django, PostgreSQL, integrations with third-party APIs. We are looking for someone who wants to stay and grow with the team."
+  },
+  {
+    "id": "adjacent-role",
+    "label": "Data scientist applying for ML engineer",
+    "expect": "Gaps should be about engineering and deployment, not about modelling.",
+    "resume": "Data scientist, five years. Built churn and propensity models in Python with scikit-learn and XGBoost, working in notebooks against a Snowflake warehouse. Designed and read out a dozen A/B tests. Handed models to the platform team for deployment.",
+    "jd": "Machine learning engineer. You will own models in production: feature pipelines, serving infrastructure, monitoring for drift, and rollback. Python required, along with Docker, Kubernetes, and experience with a model registry."
+  },
+  {
+    "id": "very-long-resume",
+    "label": "Long resume against a short JD",
+    "expect": "Should stay focused on what the JD asks for rather than summarising the whole resume.",
+    "resume": "Staff engineer, eleven years across four companies. Started in QA automation with Selenium, moved into backend Java, then into platform work. Built a CI system that cut build times from forty minutes to six. Migrated a reporting database from MySQL to PostgreSQL with zero downtime using change data capture. Designed the company's service template and the observability stack on Prometheus and Grafana. Ran the on-call rotation for three years and rewrote the incident process. Mentored nine engineers, four of whom were promoted. Also spent a year on the mobile team building a React Native client, and contributed to two open source libraries in the Java ecosystem.",
+    "jd": "Backend engineer. Java, PostgreSQL, and a willingness to be on call. Small team, established product."
+  }
+]

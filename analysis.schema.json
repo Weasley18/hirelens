@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "hirelens/analysis.schema.json",
+  "title": "AnalysisResult",
+  "description": "The exact shape the fine-tuned model is trained to emit and the API returns. Canonical source: src/analysis.ts mirrors this in zod, tests/test_schema_parity.py keeps them honest.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fitScore", "verdict", "gaps", "strengths", "interviewQuestions"],
+  "properties": {
+    "fitScore": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "How well the resume matches the JD. 0-100."
+    },
+    "verdict": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 240,
+      "description": "One sentence summarising the match and its main weakness."
+    },
+    "gaps": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["skill", "severity", "note"],
+        "properties": {
+          "skill": { "type": "string", "minLength": 1, "maxLength": 60 },
+          "severity": { "type": "string", "enum": ["minor", "moderate", "severe"] },
+          "note": { "type": "string", "minLength": 10, "maxLength": 240 }
+        }
+      }
+    },
+    "strengths": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "type": "string", "minLength": 2, "maxLength": 120 }
+    },
+    "interviewQuestions": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "targets", "difficulty"],
+        "properties": {
+          "question": { "type": "string", "minLength": 15, "maxLength": 400 },
+          "targets": { "type": "string", "minLength": 2, "maxLength": 80 },
+          "difficulty": { "type": "string", "enum": ["junior", "mid", "senior"] }
+        }
+      }
+    }
+  }
+}
