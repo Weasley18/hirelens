@@ -1,0 +1,49 @@
+{
+  "fitScore": 74,
+  "verdict": "Solid backend and data-modelling background, but no production Kubernetes or infrastructure-as-code experience.",
+  "gaps": [
+    {
+      "skill": "Kubernetes",
+      "severity": "moderate",
+      "note": "JD asks for 2+ years running services on Kubernetes; the resume shows Docker Compose only."
+    },
+    {
+      "skill": "Terraform",
+      "severity": "minor",
+      "note": "Infrastructure is described as console-configured, with no infrastructure-as-code mentioned anywhere."
+    },
+    {
+      "skill": "Team leadership",
+      "severity": "minor",
+      "note": "JD mentions mentoring two junior engineers; the resume shows individual contribution only."
+    }
+  ],
+  "strengths": [
+    "PostgreSQL schema design, including partitioning on a 40M-row table",
+    "REST API development with Fastify and Node.js",
+    "Background job processing with Redis and BullMQ",
+    "Measurable performance work: p95 latency cut from 800ms to 120ms"
+  ],
+  "interviewQuestions": [
+    {
+      "question": "You partitioned a 40M-row table. Walk me through how you chose the partition key, and what you would have done differently if the access pattern had been by customer rather than by date.",
+      "targets": "PostgreSQL / partitioning",
+      "difficulty": "senior"
+    },
+    {
+      "question": "Your Redis queue worker crashes halfway through processing a job. Describe what happens to that job, and what you would change if losing it were unacceptable.",
+      "targets": "Redis / job queues",
+      "difficulty": "mid"
+    },
+    {
+      "question": "You have run services with Docker Compose but not Kubernetes. What do you expect to be genuinely different about operating the same service on Kubernetes?",
+      "targets": "Kubernetes (gap probe)",
+      "difficulty": "mid"
+    },
+    {
+      "question": "Tell me how you got p95 latency from 800ms down to 120ms. What did you measure first, and which change turned out to matter least?",
+      "targets": "Performance debugging",
+      "difficulty": "mid"
+    }
+  ]
+}

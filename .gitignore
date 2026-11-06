@@ -1,0 +1,23 @@
+node_modules/
+.env
+.env.local
+.DS_Store
+docker-compose.override.yml
+.venv/
+__pycache__/
+*.pyc
+venv/
+*.gguf
+*.safetensors
+dist/
+.next/
+*.log
+
+# generated data + model artifacts
+apps/ml-service/data/
+apps/ml-service/outputs/
+apps/ml-service/*-lora/
+apps/ml-service/*-merged/
+
+.env.*
+!.env.example

@@ -30,6 +30,10 @@ MAX_TOKENS = 800
 TEMPERATURE = 0.2
 
 
+class ContextLimitError(ValueError):
+    pass
+
+
 @lru_cache(maxsize=1)
 def get_llm():
     from llama_cpp import Llama
@@ -45,7 +49,11 @@ def get_llm():
 def _generate_gguf(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
     prompt = build_chat_prompt(resume, jd, chunks)
 
-    output = get_llm()(
+    llm = get_llm()
+    # The same tokenizer used for inference reserves the full completion budget.
+    if len(llm.tokenize(prompt.encode("utf-8"), special=True)) + MAX_TOKENS > N_CTX:
+        raise ContextLimitError("Input exceeds context budget")
+    output = llm(
         prompt,
         max_tokens=MAX_TOKENS,
         temperature=TEMPERATURE,
@@ -90,7 +98,7 @@ def _generate_stub(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
     ]
 
     while len(questions) < 2:
-        skill = (missing + resume_skills + ["your recent work"])[len(questions)]
+        skill = (missing + resume_skills + ["your recent work", "your collaboration experience"])[len(questions)]
         questions.append(
             {
                 "question": f"Walk me through a decision you made involving {skill}, "

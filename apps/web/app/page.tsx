@@ -1,33 +1,42 @@
 "use client";
 
-import { useState } from "react";
-import type { AnalysisResult } from "@hirelens/shared";
+import { useState, useRef, useEffect } from "react";
+import { RESUME_MIN, RESUME_MAX, JD_MIN, JD_MAX, type AnalysisEnvelope } from "@hirelens/shared";
 import Assessment from "@/components/Assessment";
-import { AnalysisError, runAnalysis } from "@/lib/api";
+import { AnalysisError, runAnalysis, deleteAnalysis, type AnalysisHandle } from "@/lib/api";
 import { SAMPLE_JD, SAMPLE_RESUME } from "@/lib/sample";
 
 export default function Home() {
   const [resume, setResume] = useState("");
   const [jd, setJd] = useState("");
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [result, setResult] = useState<AnalysisEnvelope | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [waiting, setWaiting] = useState<string | null>(null);
 
+  const [handle, setHandle] = useState<AnalysisHandle | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
   const busy = waiting !== null;
+
+  async function erase() {
+    controller.current?.abort();
+    try {
+      if (handle) await deleteAnalysis(handle);
+      setHandle(null); setResult(null); setResume(""); setJd(""); setWaiting(null); setError(null);
+    } catch { setError("Deletion failed. Please try again; automatic expiry still applies."); }
+  }
 
   async function analyze(resumeText: string, jdText: string) {
     setError(null);
     setResult(null);
     setWaiting("Reading both documents");
 
-    // The model is on Lambda and may be cold. Saying so is better than a silent spinner.
-    const slowNotice = setTimeout(
-      () => setWaiting("Waking the model up — this takes about 15 seconds after a quiet period"),
-      6000,
-    );
-
+    controller.current = new AbortController();
     try {
-      setResult(await runAnalysis(resumeText, jdText));
+      if (handle) { await deleteAnalysis(handle); setHandle(null); }
+      setResult(await runAnalysis(resumeText, jdText,
+        status => setWaiting(status === "queued" ? "Waiting for an available worker" : "Assessing the documents"),
+        setHandle, controller.current.signal));
     } catch (err) {
       setError(
         err instanceof AnalysisError
@@ -35,7 +44,6 @@ export default function Home() {
           : "Something went wrong running that analysis. Try again.",
       );
     } finally {
-      clearTimeout(slowNotice);
       setWaiting(null);
     }
   }
@@ -63,6 +71,8 @@ export default function Home() {
           </label>
           <textarea
             id="resume"
+            disabled={busy}
+            maxLength={RESUME_MAX}
             rows={12}
             value={resume}
             onChange={(event) => setResume(event.target.value)}
@@ -75,6 +85,8 @@ export default function Home() {
           </label>
           <textarea
             id="jd"
+            disabled={busy}
+            maxLength={JD_MAX}
             rows={10}
             value={jd}
             onChange={(event) => setJd(event.target.value)}
@@ -82,11 +94,17 @@ export default function Home() {
             className="mt-2"
           />
 
+          <p className="mt-3 font-ui text-xs text-ink-soft">
+            Documents are held temporarily for processing (up to 15 minutes). Results expire within one hour.
+            Nothing is saved to your account. You can delete this analysis below.
+            Assessments need human review and should not determine hiring decisions on their own.
+          </p>
+          {handle && <button type="button" onClick={() => void erase()} className="mt-3 border border-rule px-4 py-2">Delete analysis and clear documents</button>}
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={() => void analyze(resume, jd)}
-              disabled={busy || resume.trim().length < 80 || jd.trim().length < 60}
+              disabled={busy || resume.trim().length < RESUME_MIN || jd.trim().length < JD_MIN}
               className="bg-ink px-5 py-2.5 font-ui text-sm text-paper disabled:opacity-40"
             >
               {busy ? "Working" : "Run analysis"}
@@ -129,7 +147,11 @@ export default function Home() {
             </div>
           )}
 
-          {result && <Assessment result={result} />}
+          {result && <div aria-live="polite">
+            {result.metadata.backend === "stub" && <p role="status" className="mb-6 border-l-2 border-flag pl-4">Demo mode: this is a simulated keyword-based assessment, not an AI model analysis.</p>}
+            {!result.metadata.grounded && <p className="mb-4 text-ink-soft">Reference material was unavailable. Review these claims against the original documents.</p>}
+            <Assessment result={result.result} />
+          </div>}
         </div>
       </div>
     </main>

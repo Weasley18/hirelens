@@ -36,7 +36,7 @@ def get_connection() -> psycopg.Connection:
         database_url = os.environ.get("DATABASE_URL")
         if not database_url:
             raise RuntimeError("DATABASE_URL is not set")
-        _connection = psycopg.connect(database_url, connect_timeout=10)
+        _connection = psycopg.connect(database_url, connect_timeout=5, autocommit=True, options="-c statement_timeout=5000")
 
     return _connection
 

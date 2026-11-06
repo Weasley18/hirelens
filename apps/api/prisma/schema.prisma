@@ -1,0 +1,26 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Analysis {
+  id         String   @id @default(uuid())
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// `embedding` is pgvector's type, which Prisma doesn't model natively — it only needs to
+// know the column exists. The similarity queries are raw SQL in apps/ml-service/rag/retrieve.py.
+// Run `CREATE EXTENSION IF NOT EXISTS vector;` against the database once before migrating.
+model KnowledgeChunk {
+  id        String   @id @default(uuid())
+  content   String
+  source    String
+  embedding Unsupported("vector(384)")?
+  createdAt DateTime @default(now())
+}

@@ -1,0 +1,16 @@
+data/
+outputs/
+tests/
+eval/
+data_gen/
+training/
+*-lora/
+*-merged/
+__pycache__/
+*.pyc
+.venv/
+
+.env
+.env.*
+llama.cpp/
+*.log

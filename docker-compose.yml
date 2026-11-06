@@ -1,0 +1,18 @@
+# Local dependencies only. Postgres image ships pgvector so `CREATE EXTENSION vector`
+# works without a custom build; Neon/Supabase have it available in prod.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: hirelens
+      POSTGRES_PASSWORD: hirelens
+      POSTGRES_DB: hirelens
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+  redis:
+    image: redis:7-alpine
+    # Private inputs/results are deliberately ephemeral and excluded from snapshots.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:6379:6379"]
+volumes:
+  pgdata:
