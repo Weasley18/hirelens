@@ -8,7 +8,9 @@ from pathlib import Path
 from threading import Lock
 
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+_parents = Path(__file__).resolve().parents
+if os.environ.get("APP_ENV", "development") == "development" and len(_parents) > 3:
+    load_dotenv(_parents[3] / ".env")
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -16,7 +18,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from common import validate_analysis
-from inference.llm import BACKEND, generate_analysis, ContextLimitError
+from inference.llm import BACKEND, generate_analysis, ContextLimitError, get_llm
 from inference.skills import extract_skills, jd_only_skills
 from inference.security import ServiceBoundary, service_token
 
@@ -28,6 +30,8 @@ async def lifespan(app):
     service_token()
     if os.environ.get("APP_ENV") == "production" and BACKEND != "gguf":
         raise RuntimeError("Production requires the gguf backend")
+    if BACKEND == "gguf":
+        get_llm()  # Fail startup if the configured artifact cannot be loaded.
     yield
 
 app = FastAPI(title="HireLens inference", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -52,6 +56,24 @@ async def invalid_request(_request, _exc):
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+@app.get("/ready")
+def readiness() -> dict:
+    try:
+        if BACKEND == "gguf":
+            get_llm()
+        elif os.environ.get("APP_ENV") == "production":
+            raise RuntimeError("Invalid backend")
+        from rag.retrieve import get_connection
+        from rag.embedder import embed_query
+        embed_query("readiness")
+        with get_connection().cursor() as cursor:
+            cursor.execute('SELECT count(*) FROM "KnowledgeChunk" WHERE embedding IS NOT NULL')
+            if cursor.fetchone()[0] == 0:
+                raise RuntimeError("Knowledge base empty")
+    except Exception:
+        raise HTTPException(503, "Service unavailable") from None
+    return {"status": "ready"}
 
 @app.post("/infer")
 def infer(req: AnalyzeRequest) -> dict:

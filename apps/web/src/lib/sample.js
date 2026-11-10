@@ -2,7 +2,6 @@
  * The one-click demo payload. Replace SAMPLE_RESUME with your own resume before you share
  * the link — a recruiter clicking this button is the main path through the whole system.
  */
-
 export const SAMPLE_RESUME = `Ronak — Backend Engineer
 Bengaluru, India
 
@@ -36,7 +35,6 @@ React, React Native, Git, GitHub Actions.
 
 EDUCATION
 B.E. Computer Science and Engineering (Cyber Security), RNS Institute of Technology.`;
-
 export const SAMPLE_JD = `Backend Engineer (Platform)
 
 We run the services that everything else at the company depends on. You would own one of

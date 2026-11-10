@@ -60,6 +60,8 @@ def main() -> None:
     if args.only:
         cases = [c for c in cases if c["id"] == args.only]
 
+    if not cases:
+        raise SystemExit("No evaluation cases selected")
     passed = 0
     with httpx.Client(timeout=120) as client:
         for case in cases:
@@ -96,6 +98,8 @@ def main() -> None:
     print(f"{passed}/{len(cases)} cases passed the automated checks.")
     print("Now read the verdicts above against the 'expected' lines yourself — that is the")
     print("part no checker does for you, and it is where the embarrassing failures show up.")
+    if passed != len(cases):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import argparse
 import time
 from pathlib import Path
 
-from common import read_jsonl, write_jsonl
+from common import read_jsonl, write_jsonl, pair_fingerprint
 from data_gen.teacher import analyse_pair
 
 PAIRS = Path("data/pairs.jsonl")
@@ -46,17 +46,18 @@ def main() -> None:
 
     pairs = read_jsonl(PAIRS)
     done = read_jsonl(OUT) if OUT.exists() else []
-    seen = {document_as_text(row["resume"])[:200] for row in done}
+    seen = {pair_fingerprint(document_as_text(row["resume"]), document_as_text(row["jd"])) for row in done}
 
     for i, pair in enumerate(pairs):
         resume = document_as_text(pair.get("resume"))
         jd = document_as_text(pair.get("jd"))
-        if resume[:200] in seen:
+        fingerprint = pair_fingerprint(resume, jd)
+        if fingerprint in seen:
             continue
         try:
             output = analyse_pair(resume, jd)
             done.append({"resume": resume, "jd": jd, "output": output, "meta": pair.get("meta", {})})
-            seen.add(resume[:200])
+            seen.add(fingerprint)
         except Exception as exc:  # noqa: BLE001
             print(f"  skipped {i}: {exc}", flush=True)
             continue

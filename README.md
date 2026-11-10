@@ -1,141 +1,117 @@
 # HireLens
 
-Paste a resume and a job description, get back what a good recruiter would write on the
-scorecard: a fit score, the gaps against the role, and interview questions worth asking.
+Compare a pasted resume with a job description to get supported strengths, gaps to explore,
+and interview questions. HireLens is an anonymous assessment workspace: results are temporary,
+and every assessment needs human review.
 
-The point of the project is not the JSON. A frontier model produces that easily. The point is
-that the JSON comes from **a 3B open-source model fine-tuned for this one task, quantized to
-4-bit, and served on demand** — grounded by retrieval over a knowledge base I wrote, for a
-running cost of zero.
+The application includes a React (JavaScript/JSX + Vite) frontend, Fastify API, Redis/BullMQ worker, PostgreSQL/pgvector
+knowledge base, and Python inference service. The development backend is a clearly labeled,
+deterministic **stub**. Real inference requires a separately trained and evaluated GGUF artifact.
+Production refuses the stub. Model quality, cost, and cold-start latency must be measured on the
+target deployment; no zero-cost or latency guarantee is made.
 
-Live demo: _add your Vercel URL here_
+## Local setup
 
----
+Requirements: Node >=22.19, Python **3.12**, Docker, and `redis-server` for API tests.
+Run these commands from the repository root:
 
-## What it does
-
-```mermaid
-flowchart LR
-    U[Browser] -->|POST /analyze| API[Fastify API]
-    API -->|enqueue| Q[(Redis / BullMQ)]
-    U -->|poll GET /analyze/:id| API
-    W[Worker] -->|dequeue| Q
-    W -->|POST /infer| ML[Inference service on Lambda]
-    ML -->|skills to vectors| PG[(Postgres + pgvector)]
-    PG -->|top chunks| ML
-    ML -->|prompt + context| M[Fine-tuned Qwen2.5-3B, Q4_K_M]
-    M -->|JSON| ML
-    ML --> W
-    W -->|save| PG
+```sh
+cp .env.example .env
+# Set ML_SERVICE_TOKEN in .env to a random secret: openssl rand -hex 32
+npm ci
+npx prisma generate --schema apps/api/prisma/schema.prisma
+docker compose up -d
+npm run db:migrate
+python3.12 -m venv apps/ml-service/.venv
+apps/ml-service/.venv/bin/python -m pip install -r apps/ml-service/requirements-dev.txt
+npm run ml -- -m rag.ingest
 ```
 
-The API returns a job id immediately and the browser polls, because inference takes seconds
-and a cold Lambda takes rather more than that. Holding the HTTP request open for the duration
-would fall over the first time two people tried the demo at once.
+Run in separate terminals:
 
-## Repository layout
-
-```
-apps/
-  api/          Fastify + Prisma + BullMQ. Validates input, queues work, serves results.
-  ml-service/   Python. Data generation, training, RAG, and the inference service.
-  web/          Next.js demo.
-packages/
-  shared/       analysis.schema.json and its zod mirror. One contract, two languages.
-```
-
-## Running it locally
-
-```bash
-cp .env.example .env            # then fill in DATABASE_URL
-docker compose up -d            # Postgres with pgvector, and Redis
-npm install
-
-cd apps/api && npx prisma migrate dev && cd ../..
-
-cd apps/ml-service
-pip install -r requirements-dev.txt
-python -m rag.ingest                              # load the knowledge base
-uvicorn inference.server:app --port 8000          # MODEL_BACKEND=stub until Phase 5 is done
-```
-
-Then, in separate terminals:
-
-```bash
+```sh
+npm run dev:ml
 npm run dev:api
 npm run dev:worker
 npm run dev:web
 ```
 
-## Tests
+Open http://localhost:3001. The backend launchers and Vite load the root `.env`; shell/platform environment
+values take precedence. `npm run ml -- ...` runs Python in the ML service directory. Direct
+Python/Prisma invocations need their environment supplied separately. For a web production build
+using local configuration, run `npm run build:web`; hosting providers should set
+`VITE_API_URL` in their build environment. The former `NEXT_PUBLIC_API_URL` name is accepted
+as a migration fallback; new configuration should use `VITE_API_URL`.
 
-```bash
-cd apps/api && npm test          # 14 tests: input validation, model-output handling
-cd apps/ml-service && pytest     # 59 tests: extraction, chunking, prompts, curation, eval
+If an existing `.venv` was created with Python 3.9, create a separate Python 3.12 environment
+rather than mixing installations. Python tests accept `PYTHON=/absolute/path/to/python`.
+
+## Verification
+
+```sh
+# Lightweight test environment: no GPU, model downloads, or llama.cpp build needed.
+apps/ml-service/.venv/bin/python -m pip install -r apps/ml-service/requirements-test.txt
+npx playwright install chromium
+npm run verify
 ```
 
-## Decisions worth explaining
+`verify` runs API tests (including an isolated Redis/BullMQ worker), Python tests, both
+production builds, and desktop/mobile Chromium tests. Browser tests use synthetic API responses;
+they do not prove real model quality. On Linux, install browser system dependencies using
+`npx playwright install --with-deps chromium`.
 
-**Why fine-tune a small model rather than prompt a large one.** Prompting works, and costs a
-per-request API call forever. Fine-tuning moves the output format into the weights, so the
-prompt gets shorter, the output gets more reliable, and the marginal cost of a request drops
-to CPU time I am not paying for. The interesting engineering is in the dataset, not the model.
+Set `TEST_DATABASE_URL` to a **disposable, migrated test database** to additionally verify worker
+PostgreSQL persistence and transactional knowledge ingestion. CI provisions this database.
+Do not point this variable at a production database. Ingestion tests use their own temporary schema.
 
-**Why the dataset is curated down so hard.** Roughly 400 generated examples become about 300.
-A teacher mistake that survives curation does not stay one bad example — the student learns it
-as a pattern. Every example is checked against the schema, checked for internal coherence
-(a 95 fit score alongside three severe gaps is not), and checked that its gaps are actually
-grounded in the job description rather than invented.
+```sh
+docker build -f apps/ml-service/Dockerfile.smoke -t hirelens-smoke .
+docker run --rm hirelens-smoke
+```
 
-**Why the grounding check is narrower than it looks.** The obvious version — compare the gap's
-words against the job description's words — rejects every correct gap phrased differently from
-the posting. A JD asking for "mentoring junior engineers" would see the gap "Team leadership"
-as an invention. Those are most of the semantically interesting gaps, so lexical matching
-would systematically strip soft-skill gaps out of the dataset and teach the model never to
-produce them. So gaps are resolved through the skill vocabulary first, and only single-word
-unknown terms fall back to word matching.
+The clean-container smoke test exercises the real stub and HTTP authentication in a fresh Python
+runtime. It does not replace building and testing the production GGUF image.
 
-**Why RAG at all, when the model is already fine-tuned.** Fine-tuning taught the model the
-shape of the task. It did not teach it a current, comprehensive bank of good interview
-questions per technology. Retrieval changes the model's job from "invent a good Kubernetes
-question from memory" to "adapt one from this material", which is a much easier task to do
-reliably at 3B parameters.
+## Behavior and limits
 
-**Why pgvector instead of a managed vector database.** The corpus is under a hundred chunks.
-A second service with its own availability, billing and client library would be infrastructure
-in exchange for nothing. Postgres was already there.
+- Access requires a separate random token, held in browser memory only. Refreshing loses access.
+- Raw inputs expire within 15 minutes. Results expire within one hour of submission.
+- Delete revokes access immediately; active computation cannot restore a deleted result.
+- Two analyses may be admitted at once across API replicas. The worker runs one at a time.
+- Transient inference failures get one retry after five seconds; invalid results fail terminally.
+- Polling tolerates temporary errors for ten minutes and can resume using **Check existing analysis**.
+- PostgreSQL stores anonymous completion records, never candidate documents or assessments.
+- The `KnowledgeChunk` table is exclusively the bundled knowledge corpus. Each ingestion atomically
+  replaces its full snapshot, including deleted/renamed sections; do not store unrelated data there.
+- A 20,000-character document cap is a transport limit, not a model-context guarantee. The current
+  2,048-token model context remains a product limitation requiring real-model validation.
 
-**Why one query per skill instead of one for the whole resume.** Embedding a whole resume
-produces the average of everything in it, which is close to nothing in particular, and
-retrieves generic chunks. Embedding "Kubernetes" retrieves Kubernetes material.
+## Deployment and training
 
-**Why training prompts contain the retrieval block.** At request time the prompt has a
-reference-material section. If training never showed one, the model meets an unfamiliar block
-at inference and quietly gets worse — output that is still plausible, just weaker, which is
-nearly invisible in logs. `training/prepare_dataset.py` runs retrieval too, so the two formats
-cannot drift. This means **Phase 6 has to run before Phase 4**, unlike the original build order.
+See [OPERATIONS.md](OPERATIONS.md) for readiness, monitoring, rollback, and rollout validation;
+[SECURITY.md](SECURITY.md) for privacy and legacy migration;
+[training instructions](apps/ml-service/training/README.md) for reproducible model artifacts;
+and [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for verification and remaining release gates.
 
-**Why Lambda for the model and a normal host for the API.** The model is the piece that is
-expensive to keep warm and cheap to run occasionally, which is exactly the serverless tradeoff.
-The API, worker and Redis are thin and always-on, and live on a small free-tier host. Lambda's
-Always Free allowance is not time-limited, so the expensive part stays free indefinitely.
+The historical [repository audit](REPOSITORY_AUDIT.md) contains findings from an earlier working
+state. It is not the current unresolved-task list.
 
-**The known limitation:** a cold Lambda takes roughly 15 seconds to pull the image and load the
-model. The UI says so rather than spinning silently. Provisioned concurrency would fix it and
-reintroduce an always-on cost, which defeats the reason for choosing Lambda.
+## React frontend
 
-## Build order
+The frontend lives in `apps/web/src`: `main.jsx` mounts React, `App.jsx` contains the workspace,
+`components/` contains the assessment and lens graphics, and `lib/api.js` talks to the unchanged
+Fastify API. Client source is plain JavaScript/JSX; backend/shared contracts remain TypeScript.
 
-The guide this was built from runs 0 through 10 in order. One change: ingest the knowledge
-base (Phase 6) before fine-tuning (Phase 4), for the prompt-format reason above.
+```sh
+npm run dev:web       # Vite at http://127.0.0.1:3001
+npm run build:web     # Static production assets in apps/web/dist
+npm run preview:web  # Local preview of the built assets on port 3001
+```
 
-| Phase | What | Needs |
-|---|---|---|
-| 1–2 | Repo, API, schema | Node, Docker, Neon |
-| 6 | Knowledge base, embeddings, retrieval | Postgres + pgvector |
-| 3 | Synthetic data generation and curation | Gemini or Groq free tier |
-| 4 | QLoRA fine-tune | Free Colab T4 |
-| 5 | Merge, convert to GGUF, quantize to Q4_K_M | Colab or a local machine |
-| 7 | Inference service wired to the queue | — |
-| 8 | Lambda, ECR, API Gateway | AWS account |
-| 9–10 | Frontend, eval set, polish | Vercel |
+Publish `apps/web/dist` with a static host. Vite preview is for local verification, not production
+hosting. HTML metadata and CSP are included in the build; `dist/_headers` supplies the full HTTP
+security policy for hosts that support that file. On other hosts, apply those headers in the host's
+configuration, especially `frame-ancestors`/`X-Frame-Options`, which cannot be enforced by a meta tag.
+Only public browser configuration belongs in `VITE_*` variables. The UI no longer requires a
+Next.js server or App Router. The current one-page interface uses section anchors, so no client
+routing dependency or SPA rewrite is required.

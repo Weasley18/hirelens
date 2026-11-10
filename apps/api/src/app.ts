@@ -1,13 +1,13 @@
-import Fastify from "fastify";
+import Fastify, { LogController } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import type IORedis from "ioredis";
 import { analyzeRoutes, type AnalysisDependencies } from "./routes/analyze.js";
 
-export async function buildApp(deps: AnalysisDependencies, options: { origins: string[]; redis?: IORedis; trustProxy?: string[]; production?: boolean }) {
+export async function buildApp(deps: AnalysisDependencies, options: { origins: string[]; redis?: IORedis; trustProxy?: string[]; production?: boolean; readiness?: () => Promise<void> }) {
   const app = Fastify({
     logger: { redact: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"] },
-    logController: { disableRequestLogging: true }, bodyLimit: 100_000,
+    logController: new LogController({ disableRequestLogging: true }), bodyLimit: 100_000,
     trustProxy: options.trustProxy?.length ? options.trustProxy : false,
   });
   await app.register(cors, { origin: options.origins, methods: ["GET", "POST", "DELETE"], allowedHeaders: ["Content-Type", "Authorization"] });
@@ -28,6 +28,18 @@ export async function buildApp(deps: AnalysisDependencies, options: { origins: s
     reply.code(status).send({ error: status === 413 ? "Documents are too large." : "Request could not be completed." });
   });
   app.get("/health", async () => ({ status: "ok" }));
+  app.get("/ready", async (_request, reply) => {
+    try {
+      if (!options.readiness) throw new Error("Readiness not configured");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([options.readiness(), new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("Readiness deadline exceeded")), 5000);
+        })]);
+      } finally { clearTimeout(timer); }
+      return { status: "ready" };
+    } catch { return reply.code(503).send({ status: "unavailable" }); }
+  });
   await app.register(analyzeRoutes, deps);
   return app;
 }

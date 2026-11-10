@@ -24,6 +24,8 @@ def evaluate_generations(raw_outputs: list[str], references: list[dict]) -> dict
     coherent     — did it avoid contradicting itself (score vs gaps)
     score_mae    — mean absolute difference from the teacher's score, in points
     """
+    if len(raw_outputs) != len(references):
+        raise ValueError("Output/reference count mismatch")
     total = len(raw_outputs)
     json_valid = 0
     schema_valid = 0
@@ -104,7 +106,9 @@ def main(generate: Callable[[list[str]], list[str]] | None = None) -> None:
     from inference.prompt import build_chat_prompt
 
     references = read_jsonl(Path("data/heldout.jsonl"))
-    prompts = [build_chat_prompt(r["resume"], r["jd"]) for r in references]
+    if not references or any("chunks" not in r for r in references):
+        raise ValueError("Prepare a nonempty held-out set with recorded retrieval context first")
+    prompts = [build_chat_prompt(r["resume"], r["jd"], r["chunks"]) for r in references]
 
     if generate is None:
         from unsloth import FastLanguageModel
@@ -114,7 +118,11 @@ def main(generate: Callable[[list[str]], list[str]] | None = None) -> None:
     else:
         raw_outputs = generate(prompts)
 
-    print_report(evaluate_generations(raw_outputs, references))
+    report = evaluate_generations(raw_outputs, references)
+    print_report(report)
+    Path("data/evaluation-report.json").write_text(__import__("json").dumps(report, indent=2))
+    if report["schema_valid_rate"] < 0.95 or report["coherent_rate"] < 0.95:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

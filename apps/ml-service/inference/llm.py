@@ -6,7 +6,7 @@
 and 10 are all testable without them. It is a test double, not a fallback — it derives its
 answer deterministically from the actual resume, JD and retrieved chunks, so it exercises
 skill extraction, retrieval and the full request path, and it never pretends to be the model:
-/health reports which backend is live and the UI says so.
+response metadata reports the backend and the UI labels simulated output.
 
 Set MODEL_BACKEND=gguf once hirelens-q4.gguf exists.
 """

@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from common import read_jsonl, validate_analysis, write_jsonl
+from common import read_jsonl, validate_analysis, write_jsonl, pair_fingerprint
 from inference.skills import extract_skills
 
 RAW = Path("data/dataset_raw.jsonl")
@@ -100,7 +100,10 @@ def review(example: dict[str, Any]) -> list[str]:
     if not isinstance(output, dict):
         return ["output is not an object"]
 
-    return validate_analysis(output) + consistency_issues(output) + grounding_issues(example)
+    issues = validate_analysis(output)
+    if issues:
+        return issues
+    return consistency_issues(output) + grounding_issues(example)
 
 
 def main() -> None:
@@ -119,10 +122,10 @@ def main() -> None:
 
     for example in raw:
         issues = review(example)
-        fingerprint = example.get("resume", "")[:200]
+        fingerprint = pair_fingerprint(example.get("resume", ""), example.get("jd", ""))
 
         if fingerprint in seen:
-            issues.append("duplicate resume")
+            issues.append("duplicate resume/JD pair")
         if issues:
             rejected.append({**example, "issues": issues})
             continue

@@ -1,0 +1,12 @@
+# Clean Python runtime contract smoke test; this does not validate real GGUF inference.
+FROM python:3.12-slim
+WORKDIR /app
+COPY apps/ml-service/requirements-test.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY packages/shared/analysis.schema.json ./analysis.schema.json
+COPY apps/ml-service/common.py ./
+COPY apps/ml-service/inference/ ./inference/
+COPY apps/ml-service/rag/ ./rag/
+COPY apps/ml-service/scripts/smoke_inference.py ./smoke_inference.py
+ENV MODEL_BACKEND=stub APP_ENV=test
+CMD ["python", "smoke_inference.py"]

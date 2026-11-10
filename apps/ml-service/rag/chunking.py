@@ -19,30 +19,26 @@ MAX_CHARS = 900
 MIN_CHARS = 120
 
 
-def _split_oversized(body: str) -> list[str]:
-    """Break a long section on paragraph boundaries, packing up to MAX_CHARS."""
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
-    chunks: list[str] = []
-    current = ""
-
-    for paragraph in paragraphs:
-        candidate = f"{current}\n\n{paragraph}" if current else paragraph
-        if len(candidate) > MAX_CHARS and current:
-            chunks.append(current)
-            current = paragraph
-        else:
-            current = candidate
-
-    if current:
-        chunks.append(current)
-
-    return chunks
+def _split_oversized(body: str, budget: int = MAX_CHARS) -> list[str]:
+    if budget < 1:
+        raise ValueError("Chunk budget must be positive")
+    pieces = []
+    remaining = body.strip()
+    while len(remaining) > budget:
+        cut = remaining.rfind(" ", 0, budget + 1)
+        if cut < budget // 2:
+            cut = budget
+        pieces.append(remaining[:cut].strip())
+        remaining = remaining[cut:].strip()
+    if remaining:
+        pieces.append(remaining)
+    return pieces
 
 
 def chunk_markdown(text: str, filename: str) -> list[dict[str, str]]:
     """One markdown document to a list of {content, source} chunks.
 
-    `source` is carried all the way to the model's prompt and into the UI, so it names the
+    `source` is carried into the model's prompt, so it names the
     document and the section rather than a file path — a recruiter reading "PostgreSQL:
     Indexing and query plans" learns something; "kb_0042" does not.
     """
@@ -60,8 +56,9 @@ def chunk_markdown(text: str, filename: str) -> list[dict[str, str]]:
         if len(body) < MIN_CHARS:
             continue
 
-        for piece in _split_oversized(body):
-            chunks.append({"content": f"{heading}. {piece}", "source": f"{title}: {heading}"})
+        prefix = heading[: min(len(heading), MAX_CHARS // 4)] + ". "
+        for piece in _split_oversized(body, MAX_CHARS - len(prefix)):
+            chunks.append({"content": prefix + piece, "source": f"{title}: {heading}"})
 
     return chunks
 

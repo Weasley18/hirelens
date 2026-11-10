@@ -1,0 +1,13 @@
+.git
+**/node_modules
+**/.venv
+**/.next
+**/__pycache__
+**/.env*
+**/data
+**/outputs
+**/*-lora
+**/*-merged
+**/test-results
+**/playwright-report
+mnt

@@ -21,3 +21,11 @@ apps/ml-service/*-merged/
 
 .env.*
 !.env.example
+
+playwright-report/
+test-results/
+.pytest_cache/
+
+.toolchains/
+apps/ml-service/*manifest.json
+apps/ml-service/quantization-requirements.lock

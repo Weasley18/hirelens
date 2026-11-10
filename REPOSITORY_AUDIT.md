@@ -1,5 +1,7 @@
 # HireLens repository audit
 
+Current remediation and verification status: [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md). Findings below describe the earlier audited state.
+
 Reviewed 2026-11-06 against the working tree, including its uncommitted restructuring. This is a code and local-verification audit, not a claim that every possible defect has been discovered. No application code was changed.
 
 The apps/api, apps/web, apps/ml-service, packages/shared split is sensible. The project is not ready for public use with real candidate data: access control, inference deployment, request lifecycles, persistence, and model evaluation need work. Several comments describe guarantees that the implementation does not provide.
@@ -112,3 +114,9 @@ Priority: P1 = fix before public deployment or relying on results; P2 = correctn
 First fix unauthorized reads/direct inference access, dependency security, and candidate-data retention. Next repair the image, runtime dependencies, configuration loading, polling limits, timeout architecture, and token budgeting. Then establish a durable, idempotent job/result lifecycle with retry and resumption. Finally align contracts and training/evaluation, preserve provenance, and add integration checks that exercise the real deployment boundaries.
 
 Keep the existing monorepo split. Add explicit ownership inside it: API routes orchestrate access-controlled application services; job processing persists lifecycle state through a repository layer; the ML runtime owns inference and retrieval; training dependencies stay separate; shared contracts are generated or checked against the same boundary-case corpus. Additional services or a large framework migration are not required to resolve these findings.
+
+**Security remediation update (2026-11-06)**
+
+The security changes are implemented; the original findings above remain as the audit record. See [SECURITY.md](SECURITY.md) for the final design and rollout procedure. Changes cover access capabilities, authenticated deletion, private IAM inference, service authentication, actual private-data TTLs and removal from Postgres, rate limits and request bounds, trusted-proxy/origin handling, dependency upgrades, safe errors, production stub rejection, stricter contracts, and chat-framing/token-budget defenses.
+
+Validation after remediation: 19 API tests and 68 Python tests pass; API and web production builds pass. `npm audit` reports zero vulnerabilities for the installed JavaScript dependency tree. The web build explicitly uses Webpack because Turbopack's CSS subprocess cannot bind its local port in this environment. The live database migration, old-queue purge, AWS deployment, and real GGUF adversarial/quality evaluation have not been executed. Prompt-injection defenses are mitigations, not proof of model immunity. Other nonsecurity findings in this audit are not claimed resolved by this work.

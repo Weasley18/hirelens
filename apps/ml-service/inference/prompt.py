@@ -39,10 +39,10 @@ def format_context(chunks: list[dict]) -> str:
 
     for chunk in chunks:
         line = f"- {document_text(chunk['content'])} (source: {document_text(chunk['source'])})"
-        if used + len(line) > MAX_CONTEXT_CHARS:
+        if used + len(line) + (1 if lines else 0) > MAX_CONTEXT_CHARS:
             continue
         lines.append(line)
-        used += len(line)
+        used += len(line) + (1 if len(lines) > 1 else 0)
 
     return "\n".join(lines)
 

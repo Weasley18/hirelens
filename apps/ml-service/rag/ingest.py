@@ -33,16 +33,16 @@ def main() -> None:
     print(f"{len(chunks)} chunks from {KNOWLEDGE_DIR}")
 
     print("embedding...")
-    vectors = embed_documents([c["content"] for c in chunks])
+    vectors = embed_documents([c["content"] for c in chunks]) if chunks else []
+    if len(vectors) != len(chunks):
+        raise ValueError("Embedding count does not match chunks")
 
     with psycopg.connect(database_url) as conn, conn.cursor() as cur:
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
-        if args.reset:
-            cur.execute('DELETE FROM "KnowledgeChunk"')
-        else:
-            sources = list({c["source"] for c in chunks})
-            cur.execute('DELETE FROM "KnowledgeChunk" WHERE source = ANY(%s)', (sources,))
+        # Serialize snapshot replacements; readers see the old or the complete new corpus.
+        cur.execute('LOCK TABLE "KnowledgeChunk" IN EXCLUSIVE MODE')
+        cur.execute('DELETE FROM "KnowledgeChunk"')
 
         for chunk, vector in zip(chunks, vectors):
             cur.execute(

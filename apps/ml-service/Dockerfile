@@ -6,7 +6,7 @@ FROM public.ecr.aws/lambda/python:3.12
 # failure without this is a wall of C errors partway through pip install.
 RUN dnf install -y gcc gcc-c++ make cmake && dnf clean all
 
-COPY requirements.txt .
+COPY apps/ml-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Bake the embedding model into the image. Fetching it on first request would add tens of
@@ -15,13 +15,12 @@ ENV HF_HOME=/opt/hf
 RUN python -c "from sentence_transformers import SentenceTransformer; \
     SentenceTransformer('BAAI/bge-small-en-v1.5')"
 
-COPY common.py ${LAMBDA_TASK_ROOT}/
-# Staged into this directory by scripts/deploy_aws.sh — Docker cannot COPY outside the
-# build context, and the canonical copy lives in packages/shared.
-COPY analysis.schema.json ${LAMBDA_TASK_ROOT}/
-COPY inference/ ${LAMBDA_TASK_ROOT}/inference/
-COPY rag/ ${LAMBDA_TASK_ROOT}/rag/
-COPY hirelens-q4.gguf ${LAMBDA_TASK_ROOT}/
+COPY apps/ml-service/common.py ${LAMBDA_TASK_ROOT}/
+# Build from the repository root; never stage files into the source tree.
+COPY packages/shared/analysis.schema.json ${LAMBDA_TASK_ROOT}/
+COPY apps/ml-service/inference/ ${LAMBDA_TASK_ROOT}/inference/
+COPY apps/ml-service/rag/ ${LAMBDA_TASK_ROOT}/rag/
+COPY apps/ml-service/hirelens-q4.gguf ${LAMBDA_TASK_ROOT}/
 
 ENV APP_ENV=production
 ENV MODEL_BACKEND=gguf

@@ -9,7 +9,18 @@ export const newToken = () => randomBytes(32).toString("hex");
 export const keys = (id: string) => ({ auth: `private:${id}:auth`, input: `private:${id}:input`, result: `private:${id}:result` });
 
 export class PrivateStore {
-  constructor(private redis: IORedis) {}
+  constructor(private redis: IORedis, private capacity = 2) {}
+  async reserve(id: string) {
+    return Number(await this.redis.eval(`
+      local now = redis.call('TIME')
+      local seconds = tonumber(now[1])
+      redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', seconds)
+      if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then return 0 end
+      redis.call('ZADD', KEYS[1], seconds + tonumber(ARGV[3]), ARGV[1])
+      redis.call('EXPIRE', KEYS[1], ARGV[3])
+      return 1`, 1, "security:inflight", id, this.capacity, INPUT_RETENTION_SECONDS)) === 1;
+  }
+  async release(id: string) { await this.redis.zrem("security:inflight", id); }
   async create(id: string, token: string, input: AnalyzeRequest) {
     const k = keys(id);
     // All private data has an actual Redis TTL, independent of BullMQ's lazy cleanup.

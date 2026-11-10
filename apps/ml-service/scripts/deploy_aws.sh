@@ -27,7 +27,7 @@ aws ecr get-login-password --region "$REGION" | docker login --username AWS --pa
 # Restrict secret-file permissions; never interpolate credentials into AWS CLI arguments/output.
 umask 077
 ENV_FILE="$(mktemp)"
-trap 'rm -f "$ENV_FILE" "${HERE}/analysis.schema.json"' EXIT
+trap 'rm -f "$ENV_FILE"' EXIT
 export DATABASE_URL ML_SERVICE_TOKEN
 python3 - "$ENV_FILE" <<'PY'
 import json, os, sys
@@ -36,8 +36,7 @@ with open(sys.argv[1], "w") as f:
               "ML_SERVICE_TOKEN": os.environ["ML_SERVICE_TOKEN"],
               "MODEL_BACKEND": "gguf", "APP_ENV": "production"}}, f)
 PY
-cp ../../packages/shared/analysis.schema.json ./analysis.schema.json
-docker build --platform linux/amd64 -t "$IMAGE" .
+docker build --platform linux/amd64 -f "$HERE/Dockerfile" -t "$IMAGE" "$HERE/../.."
 docker push "$IMAGE"
 if aws lambda get-function --function-name "$FUNCTION" --region "$REGION" >/dev/null 2>&1; then
   aws lambda update-function-code --function-name "$FUNCTION" --image-uri "$IMAGE" --region "$REGION" >/dev/null

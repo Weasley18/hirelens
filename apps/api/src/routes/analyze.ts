@@ -15,18 +15,18 @@ export async function analyzeRoutes(app: FastifyInstance, { queue, store }: Anal
   app.post("/analyze", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (request, reply) => {
     const parsed = AnalyzeRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Check the resume and job description" });
-    const counts = await queue.getJobCounts("waiting", "active", "delayed");
-    if (Object.values(counts).reduce((a, b) => a + b, 0) >= 100 || !(await store.admit())) {
+    const jobId = randomUUID();
+    if (!(await store.admit()) || !(await store.reserve(jobId))) {
       return reply.header("Retry-After", "60").code(429).send({ error: "The service is busy. Try again in a minute." });
     }
-    const jobId = randomUUID();
     const accessToken = newToken();
-    await store.create(jobId, accessToken, parsed.data);
     try {
+      await store.create(jobId, accessToken, parsed.data);
       // Queue data, return values, and failed reasons never contain candidate documents.
-      await queue.add("analyze", {}, { jobId, removeOnComplete: true, removeOnFail: { age: 3600, count: 200 } });
+      await queue.add("analyze", {}, { jobId, attempts: 2, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true, removeOnFail: { age: 3600, count: 200 } });
     } catch {
       await store.remove(jobId);
+      await store.release(jobId);
       return reply.code(503).send({ error: "The service is temporarily unavailable." });
     }
     return reply.code(202).send({ jobId, accessToken, expiresIn: RETENTION_SECONDS });
@@ -42,7 +42,7 @@ export async function analyzeRoutes(app: FastifyInstance, { queue, store }: Anal
     const job = await queue.getJob(id);
     if (!job) return { status: "failed", error: "The analysis did not finish. Try again." };
     const status = mapJobState(await job.getState());
-    if (status === "failed" || status === "done") return { status: "failed", error: "The analysis did not finish. Try again." };
+    if (status === "failed" || status === "done") return { status: "failed", error: job.failedReason === "Documents exceed model limits" ? "The documents exceed the model’s limits. Shorten them and submit again." : "The analysis did not finish. Try again." };
     return { status };
   });
 
@@ -54,7 +54,9 @@ export async function analyzeRoutes(app: FastifyInstance, { queue, store }: Anal
     await store.remove(id);
     // Active computation may finish, but save() cannot recreate deleted results.
     const job = await queue.getJob(id);
-    if (job) await job.remove().catch(() => undefined);
+    if (job) {
+      try { await job.remove(); await store.release(id); } catch { /* Active job releases its slot when processing ends. */ }
+    } else await store.release(id);
     return reply.code(204).send();
   });
 }

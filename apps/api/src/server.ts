@@ -8,6 +8,11 @@ import { prisma } from "./db.js";
 const app = await buildApp({ queue: analysisQueue, store: new PrivateStore(connection) }, {
   origins: env.CORS_ORIGIN.split(",").map(s => s.trim()), redis: connection,
   trustProxy: env.TRUST_PROXY.split(",").map(s => s.trim()).filter(Boolean), production: env.NODE_ENV === "production",
+  readiness: async () => {
+    const [heartbeat] = await Promise.all([connection.get("health:worker"),
+      prisma.$queryRaw`SELECT 1`.then(() => undefined)]);
+    if (!heartbeat) throw new Error("Worker unavailable");
+  },
 });
 await app.register(statsRoutes);
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, async () => {

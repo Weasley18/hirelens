@@ -7,12 +7,14 @@ and so do the tests, which never have a model or a database available.
 from __future__ import annotations
 
 import json
+import hashlib
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 _HERE = Path(__file__).resolve().parent
-_REPO_SCHEMA = _HERE.parents[1] / "packages" / "shared" / "analysis.schema.json"
+_REPO_SCHEMA = _HERE.parent.parent / "packages" / "shared" / "analysis.schema.json"
 _BUNDLED_SCHEMA = _HERE / "analysis.schema.json"
 
 # In the repo the schema lives in packages/shared. The Lambda image flattens the tree, so
@@ -86,3 +88,12 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n")
+
+
+def document_fingerprint(text: str) -> str:
+    normalized = " ".join(unicodedata.normalize("NFKC", text).split())
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def pair_fingerprint(resume: str, jd: str) -> str:
+    return hashlib.sha256((document_fingerprint(resume) + document_fingerprint(jd)).encode()).hexdigest()

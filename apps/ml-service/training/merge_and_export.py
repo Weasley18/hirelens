@@ -15,6 +15,10 @@ MERGED_DIR = "hirelens-merged"
 
 def main() -> None:
     from unsloth import FastLanguageModel
+    from pathlib import Path
+    import shutil
+    if not Path(ADAPTER_DIR, "training-manifest.json").exists():
+        raise ValueError("Adapter lacks training provenance; regenerate it with training.train")
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=ADAPTER_DIR,
@@ -25,6 +29,8 @@ def main() -> None:
     model = model.merge_and_unload()
     model.save_pretrained(MERGED_DIR, safe_serialization=True)
     tokenizer.save_pretrained(MERGED_DIR)
+    for name in ("training-manifest.json", "requirements.lock"):
+        shutil.copyfile(Path(ADAPTER_DIR, name), Path(MERGED_DIR, name))
 
     print(f"merged model written to {MERGED_DIR}/")
     print("Next: scripts/quantize.sh converts this to GGUF and quantizes it.")

@@ -11,7 +11,9 @@
     "start:worker": "node dist/worker.js",
     "test": "node --import tsx --test test/*.test.ts",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "privacy:purge-legacy": "tsx src/purge-legacy.ts",
+    "prisma:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@aws-sdk/client-lambda": "3.1163.0",

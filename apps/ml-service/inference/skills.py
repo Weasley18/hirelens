@@ -19,7 +19,7 @@ SKILL_ALIASES: dict[str, list[str]] = {
     "JavaScript": ["javascript", "js", "es6"],
     "TypeScript": ["typescript", "ts"],
     "Java": ["java"],
-    "Go": ["golang", "go lang"],
+    "Go": ["golang", "go lang", "go"],
     "Rust": ["rust"],
     "C++": ["c++", "cpp"],
     "C#": ["c#", ".net", "dotnet"],
@@ -93,14 +93,26 @@ def extract_skills(*texts: str, limit: int = 12) -> list[str]:
     Ordering by mention count is what makes the retrieval budget go to the technologies the
     documents actually centre on, rather than something listed once in a footer.
     """
-    haystack = " ".join(texts).lower()
     counts: dict[str, int] = {}
-
-    for alias, canonical in _ORDERED:
-        pattern = r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])"
-        found = len(re.findall(pattern, haystack))
-        if found:
-            counts[canonical] = counts.get(canonical, 0) + found
+    for text in texts:
+        haystack = text.lower()
+        occupied: list[tuple[int, int]] = []
+        for alias, canonical in _ORDERED:
+            pattern = r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])"
+            for match in re.finditer(pattern, haystack):
+                start, end = match.span()
+                if any(start < right and end > left for left, right in occupied):
+                    continue
+                # Bare lowercase 'go' is normally a verb, unless explicitly a language.
+                if alias == "go" and text[start:end] not in ("Go", "GO") and not re.match(r"\s+(?:language|programming|developer|engineer)\b", haystack[end:]):
+                    continue
+                occupied.append((start, end))
+                # Conservative, local negation heuristic, not a semantic evidence validator.
+                prefix = re.split(r"[.;\n]|\bbut\b", haystack[:start])[-1][-100:]
+                suffix = haystack[end:end + 60]
+                if re.search(r"\b(?:no|without|lack(?:s|ing)?|not|never)\b[^.;\n]{0,70}$", prefix) or re.match(r"\s+(?:(?:is|was)\s+)?(?:not required|not used|experience lacking)\b", suffix):
+                    continue
+                counts[canonical] = counts.get(canonical, 0) + 1
 
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     return [skill for skill, _ in ranked[:limit]]

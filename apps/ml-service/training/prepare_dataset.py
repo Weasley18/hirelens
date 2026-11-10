@@ -23,7 +23,7 @@ import json
 import random
 from pathlib import Path
 
-from common import read_jsonl, write_jsonl
+from common import read_jsonl, write_jsonl, document_fingerprint
 from inference.prompt import build_chat_prompt
 from inference.skills import extract_skills, jd_only_skills
 
@@ -55,22 +55,38 @@ def main() -> None:
 
         retriever = retrieve_for_skills
 
+    if args.heldout < 1 or args.heldout >= len(examples):
+        raise ValueError("Held-out size must leave both evaluation and training examples")
+    heldout_ids = set()
+    heldout_count = 0
+    for example in examples:
+        if heldout_count >= args.heldout:
+            break
+        key = document_fingerprint(example["resume"])
+        if key not in heldout_ids:
+            heldout_ids.add(key)
+            heldout_count += sum(document_fingerprint(row["resume"]) == key for row in examples)
     formatted = []
+    heldout_rows = []
     for example in examples:
         chunks = None
         if retriever:
             skills = extract_skills(example["resume"], example["jd"], limit=6)
             gaps = jd_only_skills(example["resume"], example["jd"], limit=3)
             chunks = retriever(list(dict.fromkeys(gaps + skills)))
-        formatted.append(format_example(example, chunks))
+        if document_fingerprint(example["resume"]) in heldout_ids:
+            heldout_rows.append({**example, "chunks": chunks or []})
+        else:
+            formatted.append(format_example(example, chunks))
 
-    heldout_rows = examples[: args.heldout]
+    if not formatted:
+        raise ValueError("Resume grouping leaves no training examples")
     write_jsonl(HELDOUT, heldout_rows)
-    write_jsonl(TRAIN, formatted[args.heldout :])
+    write_jsonl(TRAIN, formatted)
 
-    print(f"train:   {len(formatted) - args.heldout} -> {TRAIN}")
+    print(f"train:   {len(formatted)} -> {TRAIN}")
     print(f"heldout: {len(heldout_rows)} -> {HELDOUT}  (never seen during training)")
-    print(f"\nfirst 600 chars of one training example:\n{formatted[0]['text'][:600]}")
+    print("Prepared prompts and recorded held-out context; review the dataset locally before training.")
 
 
 if __name__ == "__main__":

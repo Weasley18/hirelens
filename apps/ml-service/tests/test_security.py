@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -89,3 +89,32 @@ def test_concurrent_inference_is_bounded(client):
         server.generate_analysis.assert_not_called()
     finally:
         server._inference_lock.release()
+
+
+def test_private_lambda_event_format(client):
+    from mangum import Mangum
+    handler = Mangum(server.app, lifespan="off")
+    event = {
+        "version": "2.0", "routeKey": "POST /infer", "rawPath": "/infer", "rawQueryString": "",
+        "headers": {"content-type": "application/json", "authorization": "Bearer " + TOKEN},
+        "requestContext": {"http": {"method": "POST", "path": "/infer", "sourceIp": "127.0.0.1", "protocol": "HTTP/1.1"}},
+        "body": json.dumps(INPUT), "isBase64Encoded": False,
+    }
+    response = handler(event, {})
+    assert response["statusCode"] == 200
+    assert json.loads(response["body"])["result"] == FIXTURE
+    event["headers"].pop("authorization")
+    assert handler(event, {})["statusCode"] == 401
+
+
+def test_readiness_is_authenticated_and_checks_dependencies(client, monkeypatch):
+    assert client.get("/ready").status_code == 401
+    from rag import retrieve, embedder
+    connection = MagicMock()
+    connection.cursor.return_value.__enter__.return_value.fetchone.return_value = (1,)
+    monkeypatch.setattr(retrieve, "get_connection", lambda: connection)
+    monkeypatch.setattr(embedder, "embed_query", lambda text: [0.0] * 384)
+    assert client.get("/ready", headers={"Authorization": "Bearer " + TOKEN}).status_code == 200
+    connection.cursor.side_effect = RuntimeError("private database password")
+    response = client.get("/ready", headers={"Authorization": "Bearer " + TOKEN})
+    assert response.status_code == 503 and "password" not in response.text

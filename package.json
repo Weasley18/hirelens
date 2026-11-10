@@ -11,7 +11,14 @@
     "dev:worker": "npm run worker --workspace apps/api",
     "dev:web": "npm run dev --workspace apps/web",
     "test": "npm run test --workspace apps/api",
-    "test:ml": "cd apps/ml-service && .venv/bin/python -m pytest -q"
+    "test:ml": "cd apps/ml-service && \"${PYTHON:-.venv/bin/python}\" -m pytest -q",
+    "test:web": "npm run test --workspace apps/web",
+    "verify": "npm test && npm run test:ml && npm run build --workspace apps/api && npm run build --workspace apps/web && npm run test:web",
+    "dev:ml": "node scripts/run-env.mjs ml -m uvicorn inference.server:app --port 8000",
+    "ml": "node scripts/run-env.mjs ml",
+    "db:migrate": "node scripts/run-env.mjs prisma migrate deploy",
+    "build:web": "npm run build --workspace apps/web",
+    "preview:web": "npm run preview --workspace apps/web"
   },
   "engines": {
     "node": ">=22.19.0"
