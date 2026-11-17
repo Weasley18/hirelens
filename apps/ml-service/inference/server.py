@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from common import validate_analysis
+from inference.limits import JD_MAX, JD_MIN, RESUME_MAX, RESUME_MIN
 from inference.llm import BACKEND, generate_analysis, ContextLimitError, get_llm
 from inference.skills import extract_skills, jd_only_skills
 from inference.security import ServiceBoundary, service_token
@@ -38,8 +39,8 @@ app = FastAPI(title="HireLens inference", docs_url=None, redoc_url=None, openapi
 app.add_middleware(ServiceBoundary)
 
 class AnalyzeRequest(BaseModel):
-    resume: str = Field(min_length=80, max_length=20000)
-    jd: str = Field(min_length=60, max_length=20000)
+    resume: str = Field(min_length=RESUME_MIN, max_length=RESUME_MAX)
+    jd: str = Field(min_length=JD_MIN, max_length=JD_MAX)
 
     @field_validator("resume", "jd", mode="before")
     @classmethod

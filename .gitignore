@@ -29,3 +29,6 @@ test-results/
 .toolchains/
 apps/ml-service/*manifest.json
 apps/ml-service/quantization-requirements.lock
+
+.codesight/
+deploy/production.env

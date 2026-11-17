@@ -13,6 +13,8 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   CORS_ORIGIN: z.string().default("http://localhost:3001"),
   TRUST_PROXY: z.string().default(""),
+  // Two queued jobs x two attempts x this timeout must fit the browser's ten-minute polling window.
+  INFERENCE_TIMEOUT_SECONDS: z.coerce.number().int().min(10).max(140).default(90),
 }).superRefine((env, ctx) => {
   if (env.CORS_ORIGIN.split(",").some(origin => !/^https?:\/\/[^/\s*]+$/.test(origin.trim()))) {
     ctx.addIssue({ code: "custom", path: ["CORS_ORIGIN"], message: "explicit origins required" });

@@ -1,7 +1,11 @@
 """Run the hand-written edge cases through the deployed system (Phase 10.3).
 
 This is not a statistical measure. It is the last thing between you and a recruiter finding
-an embarrassing failure for you. Twelve cases, read the output yourself, fix what is wrong.
+an embarrassing failure for you. Read the output yourself, fix what is wrong.
+
+Cases with an "assert" block are also checked automatically: score bounds, required gaps,
+and counterfactual groups (pairs that differ only in non-job-relevant details such as name,
+pronouns, age or the reason for a career break must score within a tolerance of each other).
 
 Run against a local stack:   python -m eval.run_eval
 Run against the deployed one: API_URL=https://your-api python -m eval.run_eval
@@ -50,6 +54,45 @@ def analyse(client: httpx.Client, resume: str, jd: str) -> dict:
         client.delete(f"{API_URL}/analyze/{job_id}", headers=headers)
 
 
+def expectation_issues(case: dict, result: dict) -> list[str]:
+    """Checks for one case's "assert" block. Counterfactual groups are checked in group_issues."""
+    rules = case.get("assert", {})
+    score = result.get("fitScore")
+    gaps = [g.get("skill", "").lower() for g in result.get("gaps", []) or []]
+    issues: list[str] = []
+    if "min_score" in rules and isinstance(score, int) and score < rules["min_score"]:
+        issues.append(f"score {score} below expected minimum {rules['min_score']}")
+    if "max_score" in rules and isinstance(score, int) and score > rules["max_score"]:
+        issues.append(f"score {score} above expected maximum {rules['max_score']}")
+    if "min_gaps" in rules and len(gaps) < rules["min_gaps"]:
+        issues.append(f"{len(gaps)} gaps listed; expected at least {rules['min_gaps']}")
+    for skill in rules.get("must_gap", []):
+        if not any(skill.lower() in gap for gap in gaps):
+            issues.append(f"expected a gap for {skill!r}")
+    return issues
+
+
+def group_issues(cases: list[dict], scores: dict[str, int]) -> list[str]:
+    """Counterfactual pairs must score alike. Missing results are reported, not skipped."""
+    groups: dict[str, list[dict]] = {}
+    for case in cases:
+        group = case.get("assert", {}).get("group")
+        if group:
+            groups.setdefault(group, []).append(case)
+    issues: list[str] = []
+    for group, members in sorted(groups.items()):
+        missing = [m["id"] for m in members if m["id"] not in scores]
+        if missing:
+            issues.append(f"group {group!r}: no result for {', '.join(missing)}")
+            continue
+        values = [scores[m["id"]] for m in members]
+        tolerance = min(m["assert"].get("tolerance", 5) for m in members)
+        if max(values) - min(values) > tolerance:
+            detail = ", ".join(f"{m['id']}={scores[m['id']]}" for m in members)
+            issues.append(f"group {group!r} spread {max(values) - min(values)} > {tolerance}: {detail}")
+    return issues
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", help="run a single case by id")
@@ -59,6 +102,7 @@ def main() -> None:
     cases = json.loads(PAIRS.read_text())
     if args.only:
         cases = [c for c in cases if c["id"] == args.only]
+    scores: dict[str, int] = {}
 
     if not cases:
         raise SystemExit("No evaluation cases selected")
@@ -77,7 +121,9 @@ def main() -> None:
                 validate_analysis(result)
                 + consistency_issues(result)
                 + grounding_issues({"jd": case["jd"], "output": result})
+                + expectation_issues(case, result)
             )
+            scores[case["id"]] = result["fitScore"]
             elapsed = time.monotonic() - started
 
             if problems:
@@ -95,10 +141,14 @@ def main() -> None:
                 print(json.dumps(result, indent=2))
             print()
 
-    print(f"{passed}/{len(cases)} cases passed the automated checks.")
+    fairness = group_issues(cases, scores)
+    for problem in fairness:
+        print(f"FLAG  {problem}")
+    print(f"{passed}/{len(cases)} cases passed the automated checks"
+          + (f"; {len(fairness)} counterfactual group(s) failed." if fairness else "."))
     print("Now read the verdicts above against the 'expected' lines yourself — that is the")
     print("part no checker does for you, and it is where the embarrassing failures show up.")
-    if passed != len(cases):
+    if passed != len(cases) or fairness:
         raise SystemExit(1)
 
 

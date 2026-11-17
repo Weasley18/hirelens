@@ -6,6 +6,9 @@ REPO="${ECR_REPO:-hirelens-ml}"
 FUNCTION="${LAMBDA_FUNCTION:-hirelens-inference}"
 ROLE_NAME="${LAMBDA_ROLE:-hirelens-lambda-role}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
+# Keep below the worker's INFERENCE_TIMEOUT_SECONDS (default 90) so Lambda gives up first.
+TIMEOUT="${LAMBDA_TIMEOUT:-80}"
+[[ "$TIMEOUT" =~ ^[0-9]+$ ]] && (( TIMEOUT >= 10 && TIMEOUT <= 135 )) || { echo "LAMBDA_TIMEOUT must be 10-135 seconds" >&2; exit 1; }
 : "${DATABASE_URL:?set DATABASE_URL}"
 : "${ML_SERVICE_TOKEN:?set ML_SERVICE_TOKEN to a random 32-byte hex token}"
 [[ "$ML_SERVICE_TOKEN" =~ ^[a-f0-9]{64}$ ]] || { echo "Invalid service token format" >&2; exit 1; }
@@ -41,11 +44,11 @@ docker push "$IMAGE"
 if aws lambda get-function --function-name "$FUNCTION" --region "$REGION" >/dev/null 2>&1; then
   aws lambda update-function-code --function-name "$FUNCTION" --image-uri "$IMAGE" --region "$REGION" >/dev/null
   aws lambda wait function-updated --function-name "$FUNCTION" --region "$REGION"
-  aws lambda update-function-configuration --function-name "$FUNCTION" --memory-size 3008 --timeout 80 \
+  aws lambda update-function-configuration --function-name "$FUNCTION" --memory-size 3008 --timeout "$TIMEOUT" \
     --environment "file://${ENV_FILE}" --region "$REGION" >/dev/null
 else
   aws lambda create-function --function-name "$FUNCTION" --package-type Image --code "ImageUri=$IMAGE" \
-    --role "$ROLE_ARN" --memory-size 3008 --timeout 80 --environment "file://${ENV_FILE}" --region "$REGION" >/dev/null
+    --role "$ROLE_ARN" --memory-size 3008 --timeout "$TIMEOUT" --environment "file://${ENV_FILE}" --region "$REGION" >/dev/null
   aws lambda wait function-active-v2 --function-name "$FUNCTION" --region "$REGION"
 fi
 aws lambda wait function-updated --function-name "$FUNCTION" --region "$REGION"

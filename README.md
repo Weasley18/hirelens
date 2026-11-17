@@ -83,14 +83,17 @@ runtime. It does not replace building and testing the production GGUF image.
 - PostgreSQL stores anonymous completion records, never candidate documents or assessments.
 - The `KnowledgeChunk` table is exclusively the bundled knowledge corpus. Each ingestion atomically
   replaces its full snapshot, including deleted/renamed sections; do not store unrelated data there.
-- A 20,000-character document cap is a transport limit, not a model-context guarantee. The current
-  2,048-token model context remains a product limitation requiring real-model validation.
+- Resumes are capped at 8,000 characters and job descriptions at 6,000, sized to fit the model's
+  6,144-token context with 800 tokens reserved for the answer (`apps/ml-service/inference/limits.py`;
+  the TypeScript caps must match, and a test enforces it). Unusually dense text can still exceed the
+  budget; the tokenizer check then fails the job with a "shorten them" message instead of truncating.
+  Changing the context size requires retraining and re-evaluating the model.
 
 ## Deployment and training
 
-See [OPERATIONS.md](OPERATIONS.md) for readiness, monitoring, rollback, and rollout validation;
+See [DEPLOYMENT.md](DEPLOYMENT.md) for a step-by-step production layout; [OPERATIONS.md](OPERATIONS.md) for readiness, monitoring, rollback, and rollout validation;
 [SECURITY.md](SECURITY.md) for privacy and legacy migration;
-[training instructions](apps/ml-service/training/README.md) for reproducible model artifacts;
+[training instructions](apps/ml-service/training/README.md) and the [Colab notebook](apps/ml-service/training/hirelens_training.ipynb) for reproducible model artifacts;
 and [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for verification and remaining release gates.
 
 The historical [repository audit](REPOSITORY_AUDIT.md) contains findings from an earlier working

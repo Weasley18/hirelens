@@ -60,3 +60,18 @@ def test_split_keeps_same_resume_out_of_training_and_saves_context(tmp_path, mon
     training = (tmp_path / "train.jsonl").read_text()
     assert heldout and all("chunks" in row for row in heldout)
     assert all(row["resume"] not in training for row in heldout)
+
+
+def test_evaluate_main_writes_report_and_fails_below_threshold(tmp_path, monkeypatch):
+    import json
+
+    from training import evaluate
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    reference = {"resume": "r" * 100, "jd": "j" * 80, "chunks": [], "output": {"fitScore": 50}}
+    (tmp_path / "data" / "heldout.jsonl").write_text(json.dumps(reference) + "\n")
+    with pytest.raises(SystemExit):
+        evaluate.main(generate=lambda prompts: ["not json"] * len(prompts), argv=[])
+    report = json.loads((tmp_path / "data" / "evaluation-report.json").read_text())
+    assert report["total"] == 1 and report["schema_valid_rate"] == 0.0

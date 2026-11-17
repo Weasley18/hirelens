@@ -1,5 +1,29 @@
 # Reproducible training and export
 
+**Quick path:** prepare the dataset on your machine (below), upload `data/train.jsonl` and
+`data/heldout.jsonl` to `MyDrive/hirelens/data/`, then open
+[`hirelens_training.ipynb`](hirelens_training.ipynb) in Google Colab with a T4 GPU and run all cells.
+The notebook does steps 4–5 and the export/evaluation below, saving every artifact to Drive.
+
+## Prepare the dataset (local, no GPU)
+
+Set one teacher key in the root `.env` (`GEMINI_API_KEY`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`;
+see `.env.example`), start the local databases, then from the repository root:
+
+```sh
+docker compose up -d && npm run db:migrate
+npm run ml -- -m rag.ingest
+npm run ml -- -m data_gen.make_pairs --count 400      # invent resume/JD pairs
+npm run ml -- -m data_gen.generate                    # teacher labels each pair
+npm run ml -- -m data_gen.curate --sample 300         # reject malformed/incoherent labels
+npm run ml -- -m training.prepare_dataset --heldout 20
+```
+
+Each data step resumes where it stopped. Skim `data/dataset_rejected.jsonl` and a sample of
+`data/dataset_clean.jsonl` before training: label quality is the main factor in model quality.
+
+## Full procedure
+
 Use a dedicated GPU environment, separate from the inference/test environments. Training scripts
 require an explicit immutable base-model revision and a dependency lock. This repository does
 not yet include a GPU-validated training lock or a proven llama.cpp/runtime combination.
@@ -31,7 +55,8 @@ python -m training.merge_and_export
 LLAMA_CPP_REVISION="$TESTED_LLAMA_COMMIT" bash scripts/quantize.sh hirelens-merged
 ```
 
-Choose a 40-character llama.cpp commit and validate the exported model with the exact
+Use llama.cpp commit `74d73dc85cc2057446bf63cc37ff649ae7cebd80`, the one vendored by the
+runtime's `llama-cpp-python==0.3.2`, so converter and runtime match; change both together. Validate the exported model with the exact
 `llama-cpp-python` version in runtime requirements. The exporter rebuilds safely after interruption,
 records the converter commit, package snapshot, and GGUF SHA-256. Retain the model, manifest,
 training lock, and quantization lock in an artifact store. Do not commit model binaries.
@@ -41,6 +66,12 @@ The production Docker build context is the repository root:
 ```sh
 docker build --platform linux/amd64 -f apps/ml-service/Dockerfile -t hirelens-ml .
 ```
+
+Evaluate the exported file with the serving runtime and settings:
+`python -m training.evaluate --gguf hirelens-q4.gguf` (needs `llama-cpp-python==0.3.2`).
+
+The context size (6,144 tokens) is defined once in `inference/limits.py` and used by training,
+merging, evaluation and serving. Changing it means retraining.
 
 Run the final GGUF through the deployed service and `python -m eval.run_eval`. Manual-case
 expectations still require human review; command success only establishes its automated checks.

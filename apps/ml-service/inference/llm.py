@@ -18,13 +18,14 @@ from functools import lru_cache
 from typing import Any
 
 from common import extract_json
+from inference.limits import CONTEXT_TOKENS, OUTPUT_TOKENS
 from inference.prompt import build_chat_prompt
 from inference.skills import extract_skills, jd_only_skills
 
 BACKEND = os.environ.get("MODEL_BACKEND", "stub")
 MODEL_PATH = os.environ.get("MODEL_PATH", "./hirelens-q4.gguf")
-N_CTX = 2048
-MAX_TOKENS = 800
+N_CTX = CONTEXT_TOKENS
+MAX_TOKENS = OUTPUT_TOKENS
 
 # Low, not zero: the task needs one reliable JSON object, not creative variety.
 TEMPERATURE = 0.2

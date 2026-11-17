@@ -22,7 +22,7 @@ async function infer(input: AnalyzeRequest): Promise<unknown> {
         body: JSON.stringify(input), isBase64Encoded: false };
       const response = await lambda.send(new InvokeCommand({ FunctionName: env.ML_LAMBDA_FUNCTION,
         InvocationType: "RequestResponse", Payload: Buffer.from(JSON.stringify(event)) }),
-        { abortSignal: AbortSignal.timeout(90_000) }).catch(() => { throw new TransientInferenceError(); });
+        { abortSignal: AbortSignal.timeout(env.INFERENCE_TIMEOUT_SECONDS * 1000) }).catch(() => { throw new TransientInferenceError(); });
       if (response.FunctionError || !response.Payload || response.Payload.length > 100_000) throw new Error("Inference failed");
       const payload = JSON.parse(Buffer.from(response.Payload).toString("utf8"));
       if ([429, 500, 503, 504].includes(payload.statusCode)) throw new TransientInferenceError();
@@ -32,7 +32,7 @@ async function infer(input: AnalyzeRequest): Promise<unknown> {
     } else {
       const response = await fetch(`${env.ML_SERVICE_URL}/infer`, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ML_SERVICE_TOKEN}` },
-        body: JSON.stringify(input), signal: AbortSignal.timeout(90_000), redirect: "error",
+        body: JSON.stringify(input), signal: AbortSignal.timeout(env.INFERENCE_TIMEOUT_SECONDS * 1000), redirect: "error",
       }).catch(() => { throw new TransientInferenceError(); });
       if ([429, 500, 503, 504].includes(response.status)) throw new TransientInferenceError();
       if (response.status === 422) throw new InvalidDocumentsError();

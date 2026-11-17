@@ -6,13 +6,16 @@ from it. This runs the held-out examples — never seen during training — and 
 numbers that decide whether to move on to Phase 5 or go back and fix the dataset.
 
 Run in Colab after training: python -m training.evaluate
+Evaluate the exported artifact with the serving runtime: python -m training.evaluate --gguf hirelens-q4.gguf
 """
 
 from __future__ import annotations
 
+import argparse
 from typing import Any, Callable
 
 from common import extract_json, validate_analysis
+from inference.limits import CONTEXT_TOKENS, OUTPUT_TOKENS
 from data_gen.curate import consistency_issues
 
 
@@ -92,35 +95,70 @@ def generate_with_unsloth(model, tokenizer, prompts: list[str]) -> list[str]:
 
     for prompt in prompts:
         inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
-        generated = model.generate(**inputs, max_new_tokens=800, temperature=0.2, do_sample=False)
+        generated = model.generate(**inputs, max_new_tokens=OUTPUT_TOKENS, temperature=0.2, do_sample=False)
         text = tokenizer.decode(generated[0], skip_special_tokens=True)
         outputs.append(text[len(tokenizer.decode(inputs["input_ids"][0], skip_special_tokens=True)):])
 
     return outputs
 
 
-def main(generate: Callable[[list[str]], list[str]] | None = None) -> None:
+def generate_with_gguf(path: str, gpu_layers: int = 0) -> Callable[[list[str]], list[str]]:
+    """Generate with llama-cpp-python, the same runtime and settings the inference service uses.
+
+    This evaluates the quantized file that will actually ship, not the adapter it came from.
+    """
+    from llama_cpp import Llama
+
+    from inference.llm import TEMPERATURE
+
+    llm = Llama(model_path=path, n_ctx=CONTEXT_TOKENS, n_gpu_layers=gpu_layers, verbose=False)
+
+    def generate(prompts: list[str]) -> list[str]:
+        outputs = []
+        for prompt in prompts:
+            if len(llm.tokenize(prompt.encode("utf-8"), special=True)) + OUTPUT_TOKENS > CONTEXT_TOKENS:
+                outputs.append("")  # counted as a failure, exactly as the service would refuse it
+                continue
+            result = llm(prompt, max_tokens=OUTPUT_TOKENS, temperature=TEMPERATURE, stop=["<|im_end|>"])
+            outputs.append(result["choices"][0]["text"])
+        return outputs
+
+    return generate
+
+
+def main(generate: Callable[[list[str]], list[str]] | None = None, argv: list[str] | None = None) -> None:
+    import json
     from pathlib import Path
 
     from common import read_jsonl
     from inference.prompt import build_chat_prompt
 
-    references = read_jsonl(Path("data/heldout.jsonl"))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--gguf", help="Evaluate this exported GGUF instead of the LoRA adapter")
+    parser.add_argument("--gpu-layers", type=int, default=0, help="llama.cpp layers to offload (-1 = all)")
+    parser.add_argument("--heldout", default="data/heldout.jsonl")
+    args = parser.parse_args(argv)
+
+    references = read_jsonl(Path(args.heldout))
     if not references or any("chunks" not in r for r in references):
         raise ValueError("Prepare a nonempty held-out set with recorded retrieval context first")
     prompts = [build_chat_prompt(r["resume"], r["jd"], r["chunks"]) for r in references]
 
+    if generate is None and args.gguf:
+        generate = generate_with_gguf(args.gguf, args.gpu_layers)
     if generate is None:
         from unsloth import FastLanguageModel
 
-        model, tokenizer = FastLanguageModel.from_pretrained("hirelens-qwen-lora", max_seq_length=2048)
+        model, tokenizer = FastLanguageModel.from_pretrained("hirelens-qwen-lora", max_seq_length=CONTEXT_TOKENS)
         raw_outputs = generate_with_unsloth(model, tokenizer, prompts)
     else:
         raw_outputs = generate(prompts)
 
     report = evaluate_generations(raw_outputs, references)
+    report["evaluated"] = args.gguf or "hirelens-qwen-lora"
     print_report(report)
-    Path("data/evaluation-report.json").write_text(__import__("json").dumps(report, indent=2))
+    name = "evaluation-report-gguf.json" if args.gguf else "evaluation-report.json"
+    Path("data", name).write_text(json.dumps(report, indent=2))
     if report["schema_valid_rate"] < 0.95 or report["coherent_rate"] < 0.95:
         raise SystemExit(1)
 

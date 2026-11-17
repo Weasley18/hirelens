@@ -9,7 +9,8 @@ and a least-privilege worker role for Lambda. Supply secrets through the hosting
 Never put service tokens into VITE_* variables (or legacy NEXT_PUBLIC_* variables).
 
 The Lambda script uses a repository-root build context without staging files into source folders.
-API/worker/web hosting is provider-specific and must still be selected and validated in staging.
+DEPLOYMENT.md describes one supported layout for API/worker (Docker Compose on a VM) and web
+(static host); whichever host is used must still be validated in staging.
 
 ## Health and observation
 

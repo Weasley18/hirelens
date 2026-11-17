@@ -71,3 +71,37 @@ tests pass, including metadata/security-header checks. Public-origin validation 
 remote HTTP origins, credentials, and URL paths. Desktop screenshots were reviewed. No Next.js
 dependency remains in the frontend dependency tree. Live-model/deployment release gates above
 remain unchanged.
+
+
+## Completion preparation — 2026-11-17
+
+- **Model context and input caps aligned.** One setting (`apps/ml-service/inference/limits.py`: 6,144
+  tokens, 800 reserved for output) now drives training, merge, evaluation and serving. Input caps
+  dropped from 20,000 to 8,000 (resume) and 6,000 (job description) characters so a maximum-length
+  request fits. A test keeps the Python and TypeScript caps identical.
+- **Training runnable on Colab.** `apps/ml-service/training/hirelens_training.ipynb` runs train →
+  adapter evaluation → merge → GGUF export → GGUF evaluation, saving artifacts to Google Drive.
+  The merge uses Unsloth's `save_pretrained_merged`. The converter is pinned to llama.cpp
+  `74d73dc8…`, the commit vendored by the runtime's `llama-cpp-python==0.3.2`.
+- **Exported model evaluated directly.** `python -m training.evaluate --gguf hirelens-q4.gguf`
+  evaluates the shipped file with the serving runtime, context and sampling settings.
+- **Claude as a data-generation teacher.** `TEACHER_PROVIDER=anthropic` / `ANTHROPIC_API_KEY`, next to
+  Gemini and OpenAI. Unknown providers now fail immediately instead of retrying.
+- **Evaluation set expanded and asserted.** 24 cases (was 12): prompt injection in resume and JD,
+  explicit negation, counterfactual pairs (name/pronouns, graduation year, career-break reason),
+  mobile and security domains, and a near-cap resume. Score bounds, required gaps and
+  counterfactual score spread now fail the run automatically.
+- **Deployment layout.** `apps/api/Dockerfile` (API/worker/migrate targets), `deploy/` Compose with
+  private Redis and Caddy TLS, and DEPLOYMENT.md. Inference timeouts are configurable
+  (`INFERENCE_TIMEOUT_SECONDS`, `LAMBDA_TIMEOUT`).
+- **Cleanup.** Removed the stray `mnt/` duplicate and the machine-specific `.codesight/` config.
+
+Verified here: 23 API tests and 94 Python tests (1 PostgreSQL test skipped without
+`TEST_DATABASE_URL`) pass; API and web production builds pass; the production-only dependency install
+resolves the shared contract; the production Compose file validates. **Not** verified here (no GPU,
+and Docker Hub and Hugging Face are unreachable from the environment used): container image builds,
+the notebook on a GPU, Unsloth merge behaviour, and real-model quality or latency. Browser tests were
+not re-run.
+
+Release gates still open: train and evaluate the real model, measure CPU latency and memory at the
+new context size, deploy to staging and complete the OPERATIONS.md checks.
