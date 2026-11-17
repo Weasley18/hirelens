@@ -47,13 +47,25 @@ def _provider() -> str:
         return "gemini"
     if os.environ.get("OPENAI_API_KEY"):
         return "openai"
-    raise RuntimeError("Set GEMINI_API_KEY or OPENAI_API_KEY — see .env.example")
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    raise RuntimeError(
+        "Set GEMINI_API_KEY, OPENAI_API_KEY or ANTHROPIC_API_KEY — see .env.example"
+    )
+
+
+_PROVIDERS = ("gemini", "openai", "anthropic")
+_DEFAULT_MODELS = {
+    "gemini": "gemini-2.0-flash",
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-sonnet-5-5",
+}
 
 
 def _model_name() -> str:
     if os.environ.get("TEACHER_MODEL"):
         return os.environ["TEACHER_MODEL"]
-    return "gemini-2.0-flash" if _provider() == "gemini" else "gpt-4o-mini"
+    return _DEFAULT_MODELS[_provider()]
 
 
 def _call_gemini(prompt: str, temperature: float) -> str:
@@ -103,18 +115,56 @@ def _call_openai(prompt: str, temperature: float) -> str:
     return payload["choices"][0]["message"]["content"]
 
 
+def _call_anthropic(prompt: str, temperature: float) -> str:
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set — see .env.example")
+
+    body = json.dumps(
+        {
+            "model": _model_name(),
+            "max_tokens": 2048,
+            "temperature": temperature,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+    ).encode()
+    request = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            payload = json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:400]
+        raise RuntimeError(f"Anthropic HTTP {exc.code}: {detail}") from exc
+
+    return "".join(
+        block.get("text", "") for block in payload.get("content", []) if block.get("type") == "text"
+    )
+
+
+_CALLERS = {"gemini": _call_gemini, "openai": _call_openai, "anthropic": _call_anthropic}
+
+
 def call_teacher(prompt: str, temperature: float = 0.7) -> str:
     """One call to the teacher model, with retries for transient/rate-limit failures."""
     provider = _provider()
+    # Validate once: a typo in TEACHER_PROVIDER is not a transient failure worth retrying.
+    if provider not in _CALLERS:
+        raise RuntimeError(f"Unknown TEACHER_PROVIDER: {provider!r}; use one of {_PROVIDERS}")
+    caller = _CALLERS[provider]
     last_error: Exception | None = None
 
     for attempt in range(_RETRIES):
         try:
-            if provider == "gemini":
-                return _call_gemini(prompt, temperature)
-            if provider == "openai":
-                return _call_openai(prompt, temperature)
-            raise RuntimeError(f"Unknown TEACHER_PROVIDER: {provider!r}")
+            return caller(prompt, temperature)
         except Exception as exc:  # noqa: BLE001 - free tiers fail in many shapes
             last_error = exc
             time.sleep(2**attempt)

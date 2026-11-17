@@ -9,6 +9,8 @@ Run in Colab (needs the GPU and the base model): python -m training.merge_and_ex
 
 from __future__ import annotations
 
+from inference.limits import CONTEXT_TOKENS
+
 ADAPTER_DIR = "hirelens-qwen-lora"
 MERGED_DIR = "hirelens-merged"
 
@@ -20,15 +22,15 @@ def main() -> None:
     if not Path(ADAPTER_DIR, "training-manifest.json").exists():
         raise ValueError("Adapter lacks training provenance; regenerate it with training.train")
 
+    # Unsloth's documented merge path: load the adapter as trained (on the 4-bit base) and let
+    # save_pretrained_merged fetch the 16-bit base weights to merge into. A hand-rolled
+    # merge_and_unload onto 4-bit weights would bake quantization error into the export.
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=ADAPTER_DIR,
-        max_seq_length=2048,
-        load_in_4bit=False,  # merging into 4-bit weights loses most of the point
+        max_seq_length=CONTEXT_TOKENS,
+        load_in_4bit=True,
     )
-
-    model = model.merge_and_unload()
-    model.save_pretrained(MERGED_DIR, safe_serialization=True)
-    tokenizer.save_pretrained(MERGED_DIR)
+    model.save_pretrained_merged(MERGED_DIR, tokenizer, save_method="merged_16bit")
     for name in ("training-manifest.json", "requirements.lock"):
         shutil.copyfile(Path(ADAPTER_DIR, name), Path(MERGED_DIR, name))
 

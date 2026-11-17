@@ -17,8 +17,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Must equal the serving context; see inference/limits.py.
+from inference.limits import CONTEXT_TOKENS as MAX_SEQ_LENGTH
+
 BASE_MODEL = "unsloth/Qwen2.5-3B-Instruct-bnb-4bit"
-MAX_SEQ_LENGTH = 2048
 OUTPUT_DIR = "hirelens-qwen-lora"
 
 

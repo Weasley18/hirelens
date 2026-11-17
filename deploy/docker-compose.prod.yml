@@ -1,0 +1,84 @@
+# Single-VM production layout for the API and worker. Inference runs on AWS Lambda
+# (apps/ml-service/scripts/deploy_aws.sh) and the web app on a static host; see DEPLOYMENT.md.
+#
+#   cp deploy/production.env.example deploy/production.env   # fill in, never commit
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/production.env run --rm migrate
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/production.env up -d
+#
+# Postgres is expected to be managed (Neon, Supabase, RDS) with pgvector available.
+# Redis runs here, private to this network, with persistence disabled on purpose: it holds
+# candidate documents and results that must disappear on expiry (see SECURITY.md).
+
+x-app: &app
+  image: hirelens-api:${APP_REVISION:?set APP_REVISION to the git commit you are deploying}
+  build:
+    context: ..
+    dockerfile: apps/api/Dockerfile
+    target: runtime
+  env_file: production.env
+  environment:
+    NODE_ENV: production
+    REDIS_URL: redis://redis:6379
+  restart: unless-stopped
+  depends_on: [redis]
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  networks: [internal]
+
+services:
+  api:
+    <<: *app
+    expose: ["3000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: ["node", "dist/worker.js"]
+
+  migrate:
+    image: hirelens-migrate:${APP_REVISION:?set APP_REVISION}
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+      target: migrate
+    env_file: production.env
+    profiles: [release]
+    restart: "no"
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal]
+
+  # TLS termination with automatic certificates. Point API_DOMAIN's DNS at this VM first.
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN, e.g. api.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on: [api]
+    networks:
+      # Fixed address so the API can trust exactly this proxy (TRUST_PROXY) and nothing else.
+      internal: { ipv4_address: 172.28.0.10 }
+
+networks:
+  internal:
+    ipam:
+      config: [{ subnet: 172.28.0.0/24 }]
+
+volumes:
+  caddy_data:
+  caddy_config:

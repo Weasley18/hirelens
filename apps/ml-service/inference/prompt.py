@@ -31,7 +31,7 @@ def document_text(value: str) -> str:
 def format_context(chunks: list[dict]) -> str:
     """Retrieved chunks as the model sees them, truncated to a sane budget.
 
-    The context window is 2048 tokens and the resume and JD have first claim on it, so
+    The context window (inference.limits.CONTEXT_TOKENS) is shared, and the resume and JD have first claim on it, so
     retrieval gets a fixed char budget rather than however much the database returned.
     """
     lines: list[str] = []

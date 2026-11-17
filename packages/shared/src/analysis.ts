@@ -34,11 +34,14 @@ export type Gap = z.infer<typeof GapSchema>;
 export type InterviewQuestion = z.infer<typeof InterviewQuestionSchema>;
 export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
 
-/** Input caps exist so a 50,000-word paste is rejected before it reaches the model (Phase 10.2). */
+/**
+ * Input caps sized to fit the model context (apps/ml-service/inference/limits.py, which must match;
+ * a Python test checks). Rejects oversized pastes before they are queued.
+ */
 export const RESUME_MIN = 80;
-export const RESUME_MAX = 20000;
+export const RESUME_MAX = 8000;
 export const JD_MIN = 60;
-export const JD_MAX = 20000;
+export const JD_MAX = 6000;
 
 export const AnalyzeRequestSchema = z.object({
   resume: z.string().trim().min(RESUME_MIN).max(RESUME_MAX).refine(s => !s.includes("<|") && !s.includes("|>")),
