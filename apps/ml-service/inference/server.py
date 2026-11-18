@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from common import validate_analysis
 from inference.limits import JD_MAX, JD_MIN, RESUME_MAX, RESUME_MIN
-from inference.llm import BACKEND, generate_analysis, ContextLimitError, get_llm
+from inference.llm import BACKEND, PRODUCTION_BACKENDS, generate_analysis, ContextLimitError, get_llm
 from inference.skills import extract_skills, jd_only_skills
 from inference.security import ServiceBoundary, service_token
 
@@ -29,11 +29,18 @@ _inference_lock = Lock()
 @asynccontextmanager
 async def lifespan(app):
     service_token()
-    if os.environ.get("APP_ENV") == "production" and BACKEND != "gguf":
-        raise RuntimeError("Production requires the gguf backend")
-    if BACKEND == "gguf":
-        get_llm()  # Fail startup if the configured artifact cannot be loaded.
+    if os.environ.get("APP_ENV") == "production" and BACKEND not in PRODUCTION_BACKENDS:
+        raise RuntimeError("Production requires the hosted or gguf backend")
+    _check_backend()  # Fail startup if the model cannot be used.
     yield
+
+def _check_backend() -> None:
+    if BACKEND == "gguf":
+        get_llm()
+    elif BACKEND == "hosted":
+        from inference.hosted import check_configuration
+        check_configuration()  # settings only: readiness probes must not spend provider credit
+
 
 app = FastAPI(title="HireLens inference", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 app.add_middleware(ServiceBoundary)
@@ -61,10 +68,9 @@ def health() -> dict:
 @app.get("/ready")
 def readiness() -> dict:
     try:
-        if BACKEND == "gguf":
-            get_llm()
-        elif os.environ.get("APP_ENV") == "production":
+        if os.environ.get("APP_ENV") == "production" and BACKEND not in PRODUCTION_BACKENDS:
             raise RuntimeError("Invalid backend")
+        _check_backend()
         from rag.retrieve import get_connection
         from rag.embedder import embed_query
         embed_query("readiness")
@@ -76,31 +82,45 @@ def readiness() -> dict:
         raise HTTPException(503, "Service unavailable") from None
     return {"status": "ready"}
 
+class InvalidModelOutput(RuntimeError):
+    pass
+
+
+def analyze_documents(resume: str, jd: str) -> dict:
+    """Retrieval, generation and validation: everything /infer does after authentication.
+
+    eval.run_eval --direct calls this in-process, so the evaluation exercises the same path.
+    """
+    gaps = jd_only_skills(resume, jd, limit=3)
+    skills = list(dict.fromkeys(gaps + extract_skills(resume, jd, limit=6)))
+    chunks = []
+    try:
+        from rag.retrieve import retrieve_for_skills
+        chunks = retrieve_for_skills(skills)
+    except Exception:
+        log.warning("Retrieval unavailable")
+    analysis = generate_analysis(resume, jd, chunks)
+    if validate_analysis(analysis):
+        raise InvalidModelOutput()
+    return {"result": analysis, "metadata": {"backend": BACKEND, "grounded": bool(chunks)}}
+
+
 @app.post("/infer")
 def infer(req: AnalyzeRequest) -> dict:
     if not _inference_lock.acquire(blocking=False):
         raise HTTPException(429, "Inference busy", headers={"Retry-After": "5"})
     try:
-        if os.environ.get("APP_ENV") == "production" and BACKEND != "gguf":
+        if os.environ.get("APP_ENV") == "production" and BACKEND not in PRODUCTION_BACKENDS:
             raise HTTPException(503, "Service unavailable")
-        gaps = jd_only_skills(req.resume, req.jd, limit=3)
-        skills = list(dict.fromkeys(gaps + extract_skills(req.resume, req.jd, limit=6)))
-        chunks = []
         try:
-            from rag.retrieve import retrieve_for_skills
-            chunks = retrieve_for_skills(skills)
-        except Exception:
-            log.warning("Retrieval unavailable")
-        try:
-            analysis = generate_analysis(req.resume, req.jd, chunks)
+            return analyze_documents(req.resume, req.jd)
         except ContextLimitError:
             raise HTTPException(422, "Documents exceed the model context budget") from None
+        except InvalidModelOutput:
+            log.warning("Invalid model output")
+            raise HTTPException(502, "Invalid model output") from None
         except Exception:
             log.warning("Inference failed")
             raise HTTPException(502, "Inference failed") from None
-        if validate_analysis(analysis):
-            log.warning("Invalid model output")
-            raise HTTPException(502, "Invalid model output")
-        return {"result": analysis, "metadata": {"backend": BACKEND, "grounded": bool(chunks)}}
     finally:
         _inference_lock.release()

@@ -1,5 +1,9 @@
 # Reproducible training and export
 
+**Optional.** HireLens runs without training by using `MODEL_BACKEND=hosted` (a provider's model
+API). Train only if you want the self-hosted `gguf` backend, for example to keep candidate
+documents off third-party servers.
+
 **Quick path:** prepare the dataset on your machine (below), upload `data/train.jsonl` and
 `data/heldout.jsonl` to `MyDrive/hirelens/data/`, then open
 [`hirelens_training.ipynb`](hirelens_training.ipynb) in Google Colab with a T4 GPU and run all cells.

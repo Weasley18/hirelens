@@ -5,6 +5,8 @@ import Icon from "@/components/Icon";
 import Lens from "@/components/Lens";
 import { AnalysisError, runAnalysis, pollAnalysis, deleteAnalysis } from "@/lib/api";
 import { SAMPLE_JD, SAMPLE_RESUME } from "@/lib/sample";
+// Set at build time when a third-party model API produces the assessment (see DEPLOYMENT.md).
+const INFERENCE_PROVIDER = import.meta.env.VITE_INFERENCE_PROVIDER || "";
 export default function App() {
     const [resume, setResume] = useState("");
     const [jd, setJd] = useState("");
@@ -141,7 +143,7 @@ Paste the role’s requirements here."/>
               <button className="text-button delete-button" type="button" disabled={deleting} onClick={() => void erase()}><Icon name="close"/> Delete analysis and clear documents</button>
               <p>Delete this analysis to edit the documents. Refreshing this tab loses access.</p>
             </div>}
-            <div className="privacy-note"><Icon name="lock"/><p>Private by design. Documents expire within 15 minutes.<br />Results expire within an hour. <a href="#privacy">Your data, explained</a></p></div>
+            <div className="privacy-note"><Icon name="lock"/><p>Private by design. Documents expire within 15 minutes.<br />Results expire within an hour.{INFERENCE_PROVIDER && <> Analysed by {INFERENCE_PROVIDER}’s AI.</>} <a href="#privacy">Your data, explained</a></p></div>
           </div>
 
           <div className="output-panel" aria-busy={waiting !== null}>
@@ -174,7 +176,7 @@ Paste the role’s requirements here."/>
             <article><span className="how-number">03</span><div><h3>Start a better conversation</h3><p>Take thoughtful, role-specific questions into your next interview.</p></div></article>
           </div>
         </section>
-        <details className="privacy-details" id="privacy"><summary><Icon name="lock"/> A note on privacy & responsible use <span aria-hidden="true">+</span></summary><div><p>Documents are held temporarily for processing, for up to 15 minutes. Results expire within one hour of submission. You can delete an analysis at any time; processing already in progress may finish, but deleted results cannot be restored.</p><p>Access stays in this tab’s memory. Refreshing or closing it loses access. Assessments need human review and should not determine hiring decisions on their own.</p></div></details>
+        <details className="privacy-details" id="privacy"><summary><Icon name="lock"/> A note on privacy & responsible use <span aria-hidden="true">+</span></summary><div><p>Documents are held temporarily for processing, for up to 15 minutes. Results expire within one hour of submission. You can delete an analysis at any time; processing already in progress may finish, but deleted results cannot be restored.</p>{INFERENCE_PROVIDER && <p data-testid="provider-disclosure">To produce the assessment, the resume and job description are sent to {INFERENCE_PROVIDER}’s API and processed under its API data terms. Only the document text is sent; HireLens adds nothing that identifies you, such as your IP address. Remove contact details from a resume if you prefer they not be shared.</p>}<p>Access stays in this tab’s memory. Refreshing or closing it loses access. Assessments need human review and should not determine hiring decisions on their own.</p></div></details>
       </main>
       <footer className="site-footer"><span className="wordmark">hirelens<span className="brand-period">.</span></span><p>See people beyond the paper.</p><span className="mono">CONTEXT OVER KEYWORDS</span></footer>
     </div>);

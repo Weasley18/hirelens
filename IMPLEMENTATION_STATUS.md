@@ -105,3 +105,29 @@ not re-run.
 
 Release gates still open: train and evaluate the real model, measure CPU latency and memory at the
 new context size, deploy to staging and complete the OPERATIONS.md checks.
+
+## Hosted model backend — 2026-11-19
+
+Decision: use a provider's model API instead of fine-tuning (training remains optional for a
+self-hosted `gguf` backend).
+
+- **`MODEL_BACKEND=hosted`** (`apps/ml-service/inference/hosted.py`). Same untrusted-document
+  framing, retrieval and schema validation as before, plus explicit scoring and fairness guidance
+  (`HOSTED_GUIDANCE` in `inference/prompt.py`). Anthropic (default, `claude-sonnet-5-5`) uses forced
+  tool use with the shared JSON schema; OpenAI and Gemini use JSON mode with the schema in the prompt.
+  Invalid answers and rate limits get one retry; auth/request errors fail immediately. Provider
+  error bodies are discarded so they cannot carry document text into logs.
+- Production accepts `hosted` or `gguf` in the ML service and the worker (`PRODUCTION_BACKENDS`),
+  and still refuses `stub`. Startup and readiness check the configuration without calling the provider.
+- **Lambda:** `Dockerfile.hosted` (no llama.cpp, compiler or model file); `deploy_aws.sh` defaults to
+  `MODEL_BACKEND=hosted`, passes the provider settings and key, and checks that two provider attempts
+  fit inside the Lambda timeout.
+- **Privacy notice:** `VITE_INFERENCE_PROVIDER` at web build time tells users, before they submit,
+  that documents are sent to that provider.
+- **Evaluation:** `python -m eval.run_eval --direct` runs the 24 cases through the in-process
+  analysis path (no API, worker or Redis); `--repeat N` flags score variation; `--save` writes results.
+
+Verified here: 101 Python tests (1 PostgreSQL test skipped), 24 API tests and 10 browser tests pass;
+both builds pass; deploy-script argument checks exercised. **Not** verified here: real provider calls
+(no API key, and provider APIs are unreachable from this environment), the hosted Lambda image build,
+and answer quality. Run the direct evaluation with a real key before deploying.

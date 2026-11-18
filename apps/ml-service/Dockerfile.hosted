@@ -1,0 +1,24 @@
+# Lambda image for MODEL_BACKEND=hosted: the model runs at the provider, so there is no GGUF
+# file, no llama.cpp and no compiler toolchain. Only retrieval (the embedding model) runs here.
+# Build from the repository root: docker build -f apps/ml-service/Dockerfile.hosted .
+FROM public.ecr.aws/lambda/python:3.12
+
+COPY apps/ml-service/requirements.txt /tmp/requirements.txt
+RUN grep -v '^llama-cpp-python' /tmp/requirements.txt > /tmp/requirements-hosted.txt \
+    && pip install --no-cache-dir -r /tmp/requirements-hosted.txt \
+    && rm /tmp/requirements*.txt
+
+# Bake the embedding model into the image so cold starts do not download it.
+ENV HF_HOME=/opt/hf
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer('BAAI/bge-small-en-v1.5')"
+
+COPY apps/ml-service/common.py ${LAMBDA_TASK_ROOT}/
+COPY packages/shared/analysis.schema.json ${LAMBDA_TASK_ROOT}/
+COPY apps/ml-service/inference/ ${LAMBDA_TASK_ROOT}/inference/
+COPY apps/ml-service/rag/ ${LAMBDA_TASK_ROOT}/rag/
+
+ENV APP_ENV=production
+ENV MODEL_BACKEND=hosted
+
+CMD ["inference.lambda_handler.handler"]

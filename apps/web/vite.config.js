@@ -11,6 +11,10 @@ export default defineConfig(({ mode, command, isPreview }) => {
     ?? process.env.NEXT_PUBLIC_API_URL ?? env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000");
   if (!["http:", "https:"].includes(api.protocol) || api.username || api.password
     || api.pathname !== "/" || api.search || api.hash) throw new Error("VITE_API_URL must be an HTTP(S) origin without credentials or a path");
+  // Who generates the assessment. Set to the provider's name (e.g. "Anthropic") when the ML service
+  // uses MODEL_BACKEND=hosted, so the privacy notice tells users documents are sent there.
+  const provider = (process.env.VITE_INFERENCE_PROVIDER ?? env.VITE_INFERENCE_PROVIDER ?? "").trim();
+  if (!/^[A-Za-z0-9 .&-]{0,40}$/.test(provider)) throw new Error("VITE_INFERENCE_PROVIDER must be a short plain-text name");
   const production = command === "build" || isPreview;
   if (production && api.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(api.hostname)) {
     throw new Error("Public API connections require HTTPS");
@@ -32,7 +36,8 @@ export default defineConfig(({ mode, command, isPreview }) => {
   return {
     envDir: repoRoot,
     // Keep the old variable as a migration fallback, but expose only the validated origin.
-    define: { "import.meta.env.VITE_API_URL": JSON.stringify(api.origin) },
+    define: { "import.meta.env.VITE_API_URL": JSON.stringify(api.origin),
+      "import.meta.env.VITE_INFERENCE_PROVIDER": JSON.stringify(provider) },
     resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) }, dedupe: ["react", "react-dom"] },
     plugins: [react(), {
       name: "hirelens-security-headers",

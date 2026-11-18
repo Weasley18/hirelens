@@ -226,3 +226,22 @@ test("invalid model output is terminal and deletion during inference cannot rest
   await deleted(job);
   assert.equal(writes, 0); assert.equal(await store.result(id), null);
 });
+
+test("production accepts hosted and gguf results but never the stub", async () => {
+  const { createProcessor } = await import("../src/processor.ts");
+  const { UnrecoverableError } = await import("bullmq");
+  for (const backend of ["hosted", "gguf", "stub"] as const) {
+    await redis.flushdb(); const store = new PrivateStore(redis);
+    const id = randomUUID(); await store.reserve(id); await store.create(id, newToken(), input);
+    const job = { id, attemptsMade: 0, opts: { attempts: 1 }, timestamp: Date.now() } as any;
+    const run = createProcessor({ store, production: true, recordCompletion: async () => {},
+      infer: async () => ({ ...envelope, metadata: { backend, grounded: true } }) });
+    if (backend === "stub") {
+      await assert.rejects(() => run(job), error => error instanceof UnrecoverableError);
+      assert.equal(await store.result(id), null);
+    } else {
+      await run(job);
+      assert.equal((await store.result(id))?.metadata.backend, backend);
+    }
+  }
+});

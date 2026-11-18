@@ -1,6 +1,9 @@
-"""Producing an analysis, with two backends.
+"""Producing an analysis, with three backends.
 
-`gguf` is the real one: the fine-tuned, quantized model from Phase 5.
+`hosted` calls a general-purpose model behind a provider API (inference/hosted.py). No
+training is needed; candidate documents are sent to that provider.
+
+`gguf` is the self-hosted option: the fine-tuned, quantized model from Phase 5.
 
 `stub` exists because Phases 4 and 5 need a GPU and several hours, while Phases 2, 6, 7, 9
 and 10 are all testable without them. It is a test double, not a fallback — it derives its
@@ -8,7 +11,7 @@ answer deterministically from the actual resume, JD and retrieved chunks, so it 
 skill extraction, retrieval and the full request path, and it never pretends to be the model:
 response metadata reports the backend and the UI labels simulated output.
 
-Set MODEL_BACKEND=gguf once hirelens-q4.gguf exists.
+Set MODEL_BACKEND=hosted (with a provider key) or MODEL_BACKEND=gguf (with hirelens-q4.gguf).
 """
 
 from __future__ import annotations
@@ -123,9 +126,16 @@ def _generate_stub(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
     }
 
 
+PRODUCTION_BACKENDS = ("hosted", "gguf")
+
+
 def generate_analysis(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
+    if BACKEND == "hosted":
+        from inference import hosted
+
+        return hosted.generate(resume, jd, chunks)
     if BACKEND == "gguf":
         return _generate_gguf(resume, jd, chunks)
     if BACKEND == "stub":
         return _generate_stub(resume, jd, chunks)
-    raise RuntimeError(f"Unknown MODEL_BACKEND: {BACKEND!r} (expected 'gguf' or 'stub')")
+    raise RuntimeError(f"Unknown MODEL_BACKEND: {BACKEND!r} (expected 'hosted', 'gguf' or 'stub')")

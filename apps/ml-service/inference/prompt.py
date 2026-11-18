@@ -19,6 +19,34 @@ SYSTEM_PROMPT = (
     "A missing skill must be required by the job description and not evidenced by the resume."
 )
 
+# A fine-tuned model learns the output format and scoring conventions from its training data.
+# A general hosted model has to be told them, so the hosted backend appends this to SYSTEM_PROMPT.
+HOSTED_GUIDANCE = """
+Scoring (fitScore, integer 0-100):
+- 85-100: meets nearly all core requirements at the level the job asks for, with clear evidence.
+- 65-84: meets most core requirements; the gaps are secondary or quick to learn.
+- 40-64: partial match; at least one core requirement is missing or only weakly evidenced.
+- 0-39: a different field or level, or most core requirements are missing.
+Judge only job-relevant evidence. Never let a name, pronouns, gender, age, graduation year,
+nationality, photo, address, or the reason for a career break affect any part of the analysis.
+
+Fields:
+- verdict: one sentence (10-240 characters) summarising the match and its main weakness.
+- gaps (0-8): only skills the job description requires that the resume does not evidence.
+  A resume saying it lacks a skill counts as not evidenced. severity is "severe" for a core
+  requirement that is absent, "moderate" for one that is partial or an important secondary skill,
+  "minor" for a nice-to-have. skill is a short name (max 60 characters); note (10-240 characters)
+  says what the job needs and what the resume shows.
+- strengths (1-8): concrete, job-relevant strengths taken from the resume, each at most
+  120 characters. Mention the specific evidence (project, metric, technology).
+- interviewQuestions (3-5 preferred, 2-8 allowed): questions that probe the gaps and verify the
+  strongest claims. Use the reference material where it is relevant. question is 15-400
+  characters; targets names the skill or claim being tested (2-80 characters); difficulty is
+  "junior", "mid" or "senior" to match the role.
+
+Write in plain English for a recruiter. Do not invent experience the resume does not state.
+""".strip()
+
 MAX_CONTEXT_CHARS = 2400
 
 
