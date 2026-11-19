@@ -3,9 +3,11 @@
 This is not a statistical measure. It is the last thing between you and a recruiter finding
 an embarrassing failure for you. Read the output yourself, fix what is wrong.
 
-Cases with an "assert" block are also checked automatically: score bounds, required gaps,
-and counterfactual groups (pairs that differ only in non-job-relevant details such as name,
-pronouns, age or the reason for a career break must score within a tolerance of each other).
+Cases with an "assert" block are also checked automatically: score bounds, gaps that must or
+must not be listed, and counterfactual groups (pairs that differ only in non-job-relevant
+details such as name, pronouns, age or the reason for a career break must score within a
+tolerance of each other). With --repeat, every run is checked and groups compare average scores,
+so run-to-run noise is not mistaken for bias.
 
 Run against a local stack:   python -m eval.run_eval
 Run against the deployed one: API_URL=https://your-api python -m eval.run_eval
@@ -19,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -67,6 +70,11 @@ def analyse_direct(resume: str, jd: str) -> dict:
 MAX_SCORE_SPREAD = 10
 
 
+def _mentions(term: str, text: str) -> bool:
+    """Term at the start of a word: "go" matches "Go" and "Golang" but not "algorithms"."""
+    return re.search(rf"\b{re.escape(term.lower())}", text) is not None
+
+
 def expectation_issues(case: dict, result: dict) -> list[str]:
     """Checks for one case's "assert" block. Counterfactual groups are checked in group_issues."""
     rules = case.get("assert", {})
@@ -80,13 +88,20 @@ def expectation_issues(case: dict, result: dict) -> list[str]:
     if "min_gaps" in rules and len(gaps) < rules["min_gaps"]:
         issues.append(f"{len(gaps)} gaps listed; expected at least {rules['min_gaps']}")
     for skill in rules.get("must_gap", []):
-        if not any(skill.lower() in gap for gap in gaps):
+        if not any(_mentions(skill, gap) for gap in gaps):
             issues.append(f"expected a gap for {skill!r}")
+    for term in rules.get("must_not_gap", []):
+        listed = [gap for gap in gaps if _mentions(term, gap)]
+        if listed:
+            issues.append(f"gap {listed[0]!r} should not be treated as a skills gap")
     return issues
 
 
-def group_issues(cases: list[dict], scores: dict[str, int]) -> list[str]:
-    """Counterfactual pairs must score alike. Missing results are reported, not skipped."""
+def group_issues(cases: list[dict], scores: dict[str, list[int] | int]) -> list[str]:
+    """Counterfactual pairs must score alike, on average across repeats.
+
+    Missing results are reported, not skipped.
+    """
     groups: dict[str, list[dict]] = {}
     for case in cases:
         group = case.get("assert", {}).get("group")
@@ -98,12 +113,18 @@ def group_issues(cases: list[dict], scores: dict[str, int]) -> list[str]:
         if missing:
             issues.append(f"group {group!r}: no result for {', '.join(missing)}")
             continue
-        values = [scores[m["id"]] for m in members]
+        means = {m["id"]: _mean(scores[m["id"]]) for m in members}
+        spread = max(means.values()) - min(means.values())
         tolerance = min(m["assert"].get("tolerance", 5) for m in members)
-        if max(values) - min(values) > tolerance:
-            detail = ", ".join(f"{m['id']}={scores[m['id']]}" for m in members)
-            issues.append(f"group {group!r} spread {max(values) - min(values)} > {tolerance}: {detail}")
+        if spread > tolerance:
+            detail = ", ".join(f"{case_id}={mean:.1f}" for case_id, mean in means.items())
+            issues.append(f"group {group!r} average spread {spread:.1f} > {tolerance}: {detail}")
     return issues
+
+
+def _mean(value: list[int] | int) -> float:
+    values = value if isinstance(value, list) else [value]
+    return sum(values) / len(values)
 
 
 def _scores(values: list[int]) -> str:
@@ -129,7 +150,7 @@ def main(argv: list[str] | None = None) -> None:
     cases = json.loads(PAIRS.read_text())
     if args.only:
         cases = [c for c in cases if c["id"] == args.only]
-    scores: dict[str, int] = {}
+    scores: dict[str, list[int]] = {}
 
     if not cases:
         raise SystemExit("No evaluation cases selected")
@@ -153,15 +174,19 @@ def main(argv: list[str] | None = None) -> None:
             run_scores = [r["fitScore"] for r in runs]
             saved.append({"id": case["id"], "scores": run_scores, "results": runs})
 
-            problems = (
-                validate_analysis(result)
-                + consistency_issues(result)
-                + grounding_issues({"jd": case["jd"], "output": result})
-                + expectation_issues(case, result)
-            )
+            problems: list[str] = []
+            for number, run in enumerate(runs, start=1):
+                prefix = f"run {number}: " if len(runs) > 1 else ""
+                for problem in (
+                    validate_analysis(run)
+                    + consistency_issues(run)
+                    + grounding_issues({"jd": case["jd"], "output": run})
+                    + expectation_issues(case, run)
+                ):
+                    problems.append(prefix + problem)
             if max(run_scores) - min(run_scores) > MAX_SCORE_SPREAD:
                 problems.append(f"score varied {min(run_scores)}-{max(run_scores)} across {len(runs)} runs")
-            scores[case["id"]] = result["fitScore"]
+            scores[case["id"]] = run_scores
             elapsed = (time.monotonic() - started) / len(runs)
 
             if problems:
