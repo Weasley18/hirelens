@@ -7,8 +7,8 @@ and every assessment needs human review.
 The application includes a React (JavaScript/JSX + Vite) frontend, Fastify API, Redis/BullMQ worker, PostgreSQL/pgvector
 knowledge base, and Python inference service. The inference service has three backends:
 
-- **hosted** (recommended): a provider's model API (Anthropic by default; OpenAI and Gemini also
-  supported) generates the analysis from the same prompt, retrieved reference material and schema
+- **hosted** (recommended): a provider's model API (OpenAI `gpt-6-luna` by default; Anthropic
+  and Gemini also supported) generates the analysis from the same prompt, retrieved reference material and schema
   validation. No training is needed. Candidate documents are sent to that provider, and the
   privacy notice says so when `VITE_INFERENCE_PROVIDER` is set.
 - **gguf**: a self-hosted fine-tuned model, if you train one (see the training instructions).
@@ -17,7 +17,7 @@ knowledge base, and Python inference service. The inference service has three ba
 Model quality, cost, and latency must be measured on the target deployment; no zero-cost or
 latency guarantee is made.
 
-To try the hosted backend locally, set `MODEL_BACKEND=hosted` and `ANTHROPIC_API_KEY` in `.env`,
+To try the hosted backend locally, set `MODEL_BACKEND=hosted` and `OPENAI_API_KEY` in `.env`,
 then run the evaluation directly, without the API, worker or Redis:
 `npm run ml -- -m eval.run_eval --direct`.
 

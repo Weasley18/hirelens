@@ -4,9 +4,16 @@ It gets the same untrusted-document framing, retrieved reference material and ou
 validation as the self-hosted model, plus HOSTED_GUIDANCE, which spells out the scoring
 conventions a fine-tuned model would have learned from its training data.
 
-Anthropic is the default. Its forced tool use returns arguments shaped by the JSON schema, so
-format failures are rare. OpenAI and Gemini use their JSON modes, with the schema in the prompt.
-Every answer is validated against the schema; an invalid one is retried once, then rejected.
+OpenAI is the default, with gpt-6-luna: the efficiency tier of GPT-6 ($0.10 input / $0.50 output
+per million tokens in November 2026, ~10x cheaper than gpt-6.1-terra), built for focused,
+high-volume structured tasks like this one. Medium reasoning effort (OpenAI's default) gives the
+small model room for the judgment parts at about $0.002 per analysis. It is a reasoning model,
+so it takes `reasoning_effort` instead of `temperature`, and `max_completion_tokens` (which also
+covers hidden reasoning tokens). Strict Structured Outputs guarantee the JSON shape; length and
+count limits are stated in the prompt and enforced by our own validator, because the strict-mode
+schema subset may not accept every JSON Schema keyword.
+Anthropic uses forced tool use with the full schema; Gemini uses JSON mode with the schema in the
+prompt. Every answer is validated; an invalid one is retried once, then rejected.
 
 Candidate documents leave this service for the provider's API. The privacy notice
 (VITE_INFERENCE_PROVIDER at web build time) must say so. Nothing from the documents or the
@@ -25,12 +32,17 @@ from typing import Any
 from common import extract_json, load_schema, validate_analysis
 from inference.prompt import HOSTED_GUIDANCE, SYSTEM_PROMPT, build_user_turn
 
-PROVIDERS = ("anthropic", "openai", "gemini")
+PROVIDERS = ("openai", "anthropic", "gemini")
+DEFAULT_PROVIDER = "openai"
 DEFAULT_MODELS = {
+    "openai": "gpt-6-luna",
     "anthropic": "claude-sonnet-5-5",
-    "openai": "gpt-4o-mini",
     "gemini": "gemini-2.0-flash",
 }
+# OpenAI reasoning effort. Hidden reasoning tokens are billed as output. "medium" suits a small model
+# on judgment-heavy output; try "low" if latency matters more. "none" re-enables temperature.
+REASONING_EFFORTS = ("none", "low", "medium", "high")
+DEFAULT_REASONING_EFFORT = "medium"
 KEY_VARIABLES = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -38,6 +50,8 @@ KEY_VARIABLES = {
 }
 TEMPERATURE = 0.2
 MAX_OUTPUT_TOKENS = 2000
+# Reasoning models spend part of max_completion_tokens on hidden reasoning before the answer.
+OPENAI_MAX_COMPLETION_TOKENS = 6000
 ATTEMPTS = 2  # one retry if the answer fails schema validation
 TOOL_NAME = "record_analysis"
 
@@ -47,7 +61,7 @@ class HostedModelError(RuntimeError):
 
 
 def provider() -> str:
-    name = os.environ.get("HOSTED_PROVIDER", "anthropic").strip().lower()
+    name = os.environ.get("HOSTED_PROVIDER", DEFAULT_PROVIDER).strip().lower()
     if name not in PROVIDERS:
         raise HostedModelError(f"HOSTED_PROVIDER must be one of {', '.join(PROVIDERS)}")
     return name
@@ -64,6 +78,13 @@ def timeout_seconds() -> float:
     return value
 
 
+def reasoning_effort() -> str:
+    effort = os.environ.get("HOSTED_REASONING_EFFORT", DEFAULT_REASONING_EFFORT).strip().lower()
+    if effort not in REASONING_EFFORTS:
+        raise HostedModelError(f"HOSTED_REASONING_EFFORT must be one of {', '.join(REASONING_EFFORTS)}")
+    return effort
+
+
 def _api_key() -> str:
     key = os.environ.get(KEY_VARIABLES[provider()], "").strip()
     if not key:
@@ -76,12 +97,33 @@ def check_configuration() -> None:
     provider()
     _api_key()
     timeout_seconds()
+    if provider() == "openai":
+        reasoning_effort()
 
 
 @lru_cache(maxsize=1)
 def output_schema() -> dict[str, Any]:
     """The shared analysis schema, minus draft metadata that tool-input schemas do not need."""
     return {k: v for k, v in load_schema().items() if k not in ("$schema", "$id", "title", "description")}
+
+
+_STRICT_UNSUPPORTED = ("minLength", "maxLength", "minimum", "maximum", "minItems", "maxItems")
+
+
+def strict_schema(node: Any = None) -> Any:
+    """The output schema reduced to the keywords every strict Structured Outputs schema accepts.
+
+    Shape, types, enums, required fields and additionalProperties: false stay, so the API
+    guarantees the structure. Length and count limits are dropped here and enforced by
+    validate_analysis after the call (HOSTED_GUIDANCE states them to the model).
+    """
+    if node is None:
+        node = output_schema()
+    if isinstance(node, dict):
+        return {k: strict_schema(v) for k, v in node.items() if k not in _STRICT_UNSUPPORTED}
+    if isinstance(node, list):
+        return [strict_schema(v) for v in node]
+    return node
 
 
 def system_prompt(include_schema: bool) -> str:
@@ -132,22 +174,31 @@ def _call_anthropic(user_turn: str) -> dict:
 
 
 def _call_openai(user_turn: str) -> dict:
-    payload = _post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-            "model": model_name(),
-            "temperature": TEMPERATURE,
-            "max_tokens": MAX_OUTPUT_TOKENS,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": system_prompt(include_schema=True)},
-                {"role": "user", "content": user_turn},
-            ],
+    effort = reasoning_effort()
+    body: dict[str, Any] = {
+        "model": model_name(),
+        "max_completion_tokens": OPENAI_MAX_COMPLETION_TOKENS,
+        "reasoning_effort": effort,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "analysis", "strict": True, "schema": strict_schema()},
         },
-        {"Authorization": f"Bearer {_api_key()}"},
-    )
+        "messages": [
+            {"role": "system", "content": system_prompt(include_schema=False)},
+            {"role": "user", "content": user_turn},
+        ],
+        # Do not save these completions in the account's stored-completions dashboard.
+        "store": False,
+    }
+    if effort == "none":
+        body["temperature"] = TEMPERATURE  # sampling settings are rejected while reasoning is on
+    payload = _post("https://api.openai.com/v1/chat/completions", body,
+                    {"Authorization": f"Bearer {_api_key()}"})
     try:
-        return extract_json(payload["choices"][0]["message"]["content"])
+        message = payload["choices"][0]["message"]
+        if message.get("refusal"):
+            raise ValueError("refused")
+        return extract_json(message["content"])
     except (KeyError, IndexError, TypeError, ValueError):
         raise HostedModelError("openai returned no analysis") from None
 

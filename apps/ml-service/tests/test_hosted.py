@@ -20,9 +20,10 @@ TOKEN = "b" * 64
 
 @pytest.fixture(autouse=True)
 def env(monkeypatch):
-    for key in ("HOSTED_PROVIDER", "HOSTED_MODEL", "HOSTED_TIMEOUT_SECONDS",
+    for key in ("HOSTED_PROVIDER", "HOSTED_MODEL", "HOSTED_TIMEOUT_SECONDS", "HOSTED_REASONING_EFFORT",
                 "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HOSTED_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
 
 
@@ -91,15 +92,63 @@ def test_rate_limit_is_retried_but_auth_errors_are_not(monkeypatch):
     assert excinfo.value.__cause__ is None and excinfo.value.__suppress_context__
 
 
-def test_openai_and_gemini_use_json_mode_with_schema_in_prompt(monkeypatch):
+def _openai_reply(analysis):
+    return {"choices": [{"message": {"content": json.dumps(analysis), "refusal": None}}]}
+
+
+def test_openai_is_the_default_provider_with_gpt_6_luna(monkeypatch):
+    monkeypatch.delenv("HOSTED_PROVIDER")
+    assert hosted.provider() == "openai"
+    assert hosted.model_name() == "gpt-6-luna"
+
+
+def test_openai_request_uses_reasoning_model_parameters_and_strict_schema(monkeypatch):
     monkeypatch.setenv("HOSTED_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
-    seen = _respond(monkeypatch, {"choices": [{"message": {"content": json.dumps(FIXTURE)}}]})
+    seen = _respond(monkeypatch, _openai_reply(FIXTURE))
     assert hosted.generate(RESUME, JD, []) == FIXTURE
-    assert seen[0]["body"]["response_format"] == {"type": "json_object"}
-    assert '"interviewQuestions"' in seen[0]["body"]["messages"][0]["content"]
-    assert seen[0]["headers"]["authorization"] == "Bearer test-openai-key"
 
+    request = seen[0]
+    assert request["url"] == "https://api.openai.com/v1/chat/completions"
+    assert request["headers"]["authorization"] == "Bearer test-openai-key"
+    body = request["body"]
+    assert body["model"] == "gpt-6-luna"
+    assert body["reasoning_effort"] == "medium"
+    assert "temperature" not in body and "max_tokens" not in body  # rejected while reasoning is on
+    assert body["max_completion_tokens"] >= 4000
+    assert body["store"] is False
+    response_format = body["response_format"]
+    assert response_format["type"] == "json_schema" and response_format["json_schema"]["strict"] is True
+    schema_text = json.dumps(response_format["json_schema"]["schema"])
+    assert '"interviewQuestions"' in schema_text and "maxLength" not in schema_text
+    assert "120 characters" in body["messages"][0]["content"]  # limits stated in the prompt instead
+
+
+def test_openai_reasoning_none_restores_temperature_and_bad_effort_fails(monkeypatch):
+    monkeypatch.setenv("HOSTED_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("HOSTED_REASONING_EFFORT", "none")
+    seen = _respond(monkeypatch, _openai_reply(FIXTURE))
+    hosted.generate(RESUME, JD, [])
+    assert seen[0]["body"]["temperature"] == hosted.TEMPERATURE
+    monkeypatch.setenv("HOSTED_REASONING_EFFORT", "extreme")
+    with pytest.raises(hosted.HostedModelError, match="HOSTED_REASONING_EFFORT"):
+        hosted.check_configuration()
+
+
+def test_openai_refusal_and_limit_violations_are_retried_then_rejected(monkeypatch):
+    monkeypatch.setenv("HOSTED_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    refusal = {"choices": [{"message": {"content": None, "refusal": "I can't help with that."}}]}
+    too_long = dict(FIXTURE, verdict="x" * 300)  # strict schema has no maxLength; our validator does
+    seen = _respond(monkeypatch, refusal, _openai_reply(FIXTURE))
+    assert hosted.generate(RESUME, JD, []) == FIXTURE and len(seen) == 2
+    _respond(monkeypatch, _openai_reply(too_long), _openai_reply(too_long))
+    with pytest.raises(hosted.HostedModelError, match="valid analysis"):
+        hosted.generate(RESUME, JD, [])
+
+
+def test_gemini_uses_json_mode_with_schema_in_prompt(monkeypatch):
     monkeypatch.setenv("HOSTED_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
     monkeypatch.setenv("HOSTED_MODEL", "gemini-test")

@@ -29,10 +29,17 @@ The Lambda only runs retrieval and calls the provider, so no model file is neede
 export AWS_REGION=ap-south-1
 export DATABASE_URL="postgresql://…"
 export ML_SERVICE_TOKEN="$(openssl rand -hex 32)"   # keep it: the worker needs the same value
-export ANTHROPIC_API_KEY="sk-ant-…"                 # stored as an encrypted Lambda variable
-# Optional: HOSTED_MODEL=claude-haiku-5-5 (cheaper, faster), HOSTED_PROVIDER=openai|gemini
+export OPENAI_API_KEY="sk-…"                        # stored as an encrypted Lambda variable
+# Optional: HOSTED_MODEL=gpt-6.1-terra (stronger, ~10x cost), HOSTED_REASONING_EFFORT=low|high,
+#           HOSTED_PROVIDER=anthropic|gemini (with that provider's key)
 MODEL_BACKEND=hosted bash apps/ml-service/scripts/deploy_aws.sh
 ```
+
+The default model is `gpt-6-luna` with medium reasoning effort. At about 4,000 input and up to ~3,000
+output tokens (answer plus hidden reasoning) per analysis, that is roughly $0.002 per analysis at
+November 2026 list prices ($0.10 / $0.50 per million tokens); re-check current pricing before launch.
+If the evaluation shows Luna missing gaps or scoring inconsistently, switch to `gpt-6.1-terra`
+($1 / $5) before raising reasoning effort further.
 
 Use a separate API key for production with a monthly spending limit set in the provider's console:
 the Lambda's reserved concurrency of 2 bounds request rate, not spend. Check the provider's API data
@@ -73,7 +80,7 @@ forward-only; read OPERATIONS.md before rolling back across one.
 Build with the public API origin baked in, then publish `apps/web/dist`:
 
 ```sh
-VITE_API_URL="https://api.example.com" VITE_INFERENCE_PROVIDER="Anthropic" npm run build:web
+VITE_API_URL="https://api.example.com" VITE_INFERENCE_PROVIDER="OpenAI" npm run build:web
 ```
 
 `VITE_INFERENCE_PROVIDER` adds a notice, shown before submission, that documents are sent to that

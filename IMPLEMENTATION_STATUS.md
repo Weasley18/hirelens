@@ -131,3 +131,15 @@ Verified here: 101 Python tests (1 PostgreSQL test skipped), 24 API tests and 10
 both builds pass; deploy-script argument checks exercised. **Not** verified here: real provider calls
 (no API key, and provider APIs are unreachable from this environment), the hosted Lambda image build,
 and answer quality. Run the direct evaluation with a real key before deploying.
+
+### Default provider: OpenAI GPT-6 Luna — 2026-11-19
+
+Chosen from OpenAI's November 2026 price list for a ~4K-input, ~1K-output structured judgment task:
+`gpt-6-luna` ($0.10 / $0.50 per million tokens), the GPT-6 efficiency tier for focused high-volume
+work, with Structured Outputs and configurable reasoning; about $0.002 per analysis at medium effort.
+`gpt-6.1-terra` ($1 / $5, mid tier) is the step up if evaluation shows Luna is not good enough;
+the Sol tier ($2 / $10) is not needed for this task. The request follows reasoning-model rules:
+`reasoning_effort` (default `medium`, configurable via `HOSTED_REASONING_EFFORT`), no `temperature`
+unless effort is `none`, `max_completion_tokens` sized for hidden reasoning, strict `json_schema`
+Structured Outputs (length/count limits enforced by our validator), `store: false`, and refusals
+treated as invalid answers. Not verified against the live API from this environment.

@@ -16,7 +16,7 @@ case "$BACKEND" in
   hosted)
     DOCKERFILE="$HERE/Dockerfile.hosted"
     MEMORY="${LAMBDA_MEMORY:-2048}"
-    HOSTED_PROVIDER="${HOSTED_PROVIDER:-anthropic}"
+    HOSTED_PROVIDER="${HOSTED_PROVIDER:-openai}"
     case "$HOSTED_PROVIDER" in
       anthropic) KEY_VAR=ANTHROPIC_API_KEY ;; openai) KEY_VAR=OPENAI_API_KEY ;; gemini) KEY_VAR=GEMINI_API_KEY ;;
       *) echo "HOSTED_PROVIDER must be anthropic, openai or gemini" >&2; exit 1 ;;
@@ -56,7 +56,7 @@ umask 077
 ENV_FILE="$(mktemp)"
 trap 'rm -f "$ENV_FILE"' EXIT
 export DATABASE_URL ML_SERVICE_TOKEN BACKEND
-[ "$BACKEND" != hosted ] || export HOSTED_PROVIDER HOSTED_TIMEOUT_SECONDS KEY_VAR "$KEY_VAR"
+[ "$BACKEND" != hosted ] || export HOSTED_PROVIDER HOSTED_TIMEOUT_SECONDS KEY_VAR "$KEY_VAR" HOSTED_MODEL="${HOSTED_MODEL:-}" HOSTED_REASONING_EFFORT="${HOSTED_REASONING_EFFORT:-}"
 python3 - "$ENV_FILE" <<'PY'
 import json, os, sys
 variables = {"DATABASE_URL": os.environ["DATABASE_URL"],
@@ -67,8 +67,9 @@ if os.environ["BACKEND"] == "hosted":
     variables.update({"HOSTED_PROVIDER": os.environ["HOSTED_PROVIDER"],
                       "HOSTED_TIMEOUT_SECONDS": os.environ["HOSTED_TIMEOUT_SECONDS"],
                       key_var: os.environ[key_var]})
-    if os.environ.get("HOSTED_MODEL"):
-        variables["HOSTED_MODEL"] = os.environ["HOSTED_MODEL"]
+    for optional in ("HOSTED_MODEL", "HOSTED_REASONING_EFFORT"):
+        if os.environ.get(optional):
+            variables[optional] = os.environ[optional]
 with open(sys.argv[1], "w") as f:
     json.dump({"Variables": variables}, f)
 PY
