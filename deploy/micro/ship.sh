@@ -11,7 +11,7 @@ HOST="${1:?usage: bash deploy/micro/ship.sh ubuntu@<vm-ip>}"
 cd "$(git rev-parse --show-toplevel)"
 ENV_FILE=deploy/production.env
 [ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE (copy deploy/production.env.example)" >&2; exit 1; }
-API_DOMAIN="$(grep -E '^API_DOMAIN=' "$ENV_FILE" | cut -d= -f2- | tr -d '"')"
+API_DOMAIN="$(grep -E '^API_DOMAIN=' "$ENV_FILE" | cut -d= -f2- | sed -E 's/[[:space:]]+#.*$//' | tr -d '"')"
 [ -n "$API_DOMAIN" ] || { echo "Set API_DOMAIN in $ENV_FILE" >&2; exit 1; }
 if [ -n "$(git status --porcelain -- apps packages package.json package-lock.json)" ]; then
   echo "Commit or stash app changes first, so the image matches APP_REVISION." >&2; exit 1

@@ -10,14 +10,14 @@ done
 chmod 600 deploy/production.env deploy/ml.env
 
 APP_REVISION="$(git rev-parse --short HEAD)"
-API_DOMAIN="$(grep -E '^API_DOMAIN=' deploy/production.env | cut -d= -f2- | tr -d '"')"
+API_DOMAIN="$(grep -E '^API_DOMAIN=' deploy/production.env | cut -d= -f2- | sed -E 's/[[:space:]]+#.*$//' | tr -d '"')"
 [ -n "$API_DOMAIN" ] || { echo "Set API_DOMAIN in deploy/production.env" >&2; exit 1; }
 export APP_REVISION API_DOMAIN
 compose=(docker compose -f deploy/docker-compose.prod.yml --env-file deploy/production.env)
 
 # POSTGRES_PASSWORD set: run Postgres on this VM (deploy/docker-compose.db.yml). Otherwise
 # DATABASE_URL points at a managed database.
-POSTGRES_PASSWORD="$(grep -E '^POSTGRES_PASSWORD=' deploy/production.env | cut -d= -f2- | tr -d '"' || true)"
+POSTGRES_PASSWORD="$(grep -E '^POSTGRES_PASSWORD=' deploy/production.env | cut -d= -f2- | sed -E 's/[[:space:]]+#.*$//' | tr -d '"' || true)"
 if [ -n "$POSTGRES_PASSWORD" ]; then
   [[ "$POSTGRES_PASSWORD" =~ ^[A-Za-z0-9]{24,}$ ]] || {
     echo "POSTGRES_PASSWORD must be 24+ letters/digits (it goes inside a URL): openssl rand -hex 24" >&2; exit 1; }
