@@ -15,12 +15,28 @@ API_DOMAIN="$(grep -E '^API_DOMAIN=' deploy/production.env | cut -d= -f2- | tr -
 export APP_REVISION API_DOMAIN
 compose=(docker compose -f deploy/docker-compose.prod.yml --env-file deploy/production.env)
 
+# POSTGRES_PASSWORD set: run Postgres on this VM (deploy/docker-compose.db.yml). Otherwise
+# DATABASE_URL points at a managed database.
+POSTGRES_PASSWORD="$(grep -E '^POSTGRES_PASSWORD=' deploy/production.env | cut -d= -f2- | tr -d '"' || true)"
+if [ -n "$POSTGRES_PASSWORD" ]; then
+  [[ "$POSTGRES_PASSWORD" =~ ^[A-Za-z0-9]{24,}$ ]] || {
+    echo "POSTGRES_PASSWORD must be 24+ letters/digits (it goes inside a URL): openssl rand -hex 24" >&2; exit 1; }
+  compose+=(-f deploy/docker-compose.db.yml)
+  mkdir -p deploy/backups
+  echo "Database: Postgres on this VM"
+else
+  echo "Database: DATABASE_URL from production.env"
+fi
+
 echo "Building $APP_REVISION (the first build takes several minutes)..."
 "${compose[@]}" build
 "${compose[@]}" --profile release build migrate
 
 echo "Applying database migrations..."
 "${compose[@]}" run --rm migrate
+
+echo "Loading the knowledge base..."
+"${compose[@]}" run --rm --no-deps ml python -m rag.ingest
 
 echo "Starting..."
 "${compose[@]}" up -d --remove-orphans

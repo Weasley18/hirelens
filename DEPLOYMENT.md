@@ -4,23 +4,26 @@ One supported layout. Other hosts work if they meet the same constraints (see SE
 
 | Piece | Where | How |
 |---|---|---|
-| Postgres + pgvector | Managed (Neon, Supabase or RDS) | Connection string in `DATABASE_URL` |
-| API + worker + ML service + Redis | One VM with Docker, ~2 GB RAM (e.g. Oracle Always Free Ampere A1) | `deploy/update.sh` (Caddy terminates TLS) |
+| API + worker + ML service + Redis + Postgres | One VM with Docker, ~3 GB RAM (e.g. Oracle Always Free Ampere A1) | `deploy/update.sh` (Caddy terminates TLS) |
 | Web | Static host that honours `_headers` (Cloudflare Pages or Netlify) | `npm run build:web`, publish `apps/web/dist` |
 
-The ML service calls the model provider (OpenAI by default) and is only reachable on the VM's private
-Docker network. Alternatives: run it on AWS Lambda (step 2b), or use a 1 GB VM for the rest (step 3b).
+The ML service calls the model provider (OpenAI by default). It and Postgres are only reachable on the
+VM's private Docker network. A managed Postgres (Neon, Supabase) also works; see step 1. Alternatives: run it on AWS Lambda (step 2b), or use a 1 GB VM for the rest (step 3b).
 
 Deploy everything from the same git commit. Use synthetic resumes only until the staging checks in OPERATIONS.md pass.
 
 ## 1. Database
 
-Create a Postgres 16 database with the `vector` extension available. Keep the direct (non-pooled) URL for migrations.
-Ingest the knowledge corpus once per corpus change, from your machine:
+**On the VM (default):** set `POSTGRES_PASSWORD` in `deploy/production.env` (`openssl rand -hex 24`).
+`deploy/update.sh` then runs Postgres + pgvector next to the app, applies migrations and loads the
+knowledge base on every deploy; nothing else to do. It stores only the knowledge base and minimal
+analysis records (candidate documents live in Redis and expire), so it can be rebuilt from scratch.
+Nightly dumps are kept for 7 days in `~/hirelens/deploy/backups/` on the VM; they protect against
+mistakes, not against losing the VM.
 
-```sh
-DATABASE_URL="postgresql://…" npm run ml -- -m rag.ingest
-```
+**Managed instead (Neon, Supabase, RDS):** leave `POSTGRES_PASSWORD` empty and set `DATABASE_URL` to the
+direct (non-pooled) connection string of a Postgres 16 database with the `vector` extension available.
+`update.sh` migrates it and loads the knowledge base the same way.
 
 ## 2. Model provider
 
@@ -79,11 +82,12 @@ with about 2 GB of RAM works the same way. Replace `<VM_IP>` and the key path wi
    bash deploy/update.sh
    curl https://api.yourdomain.com/ready
    ```
-   In `production.env`, set `API_DOMAIN`, `DATABASE_URL` (direct, non-pooled URL), `ML_SERVICE_TOKEN`
-   (`openssl rand -hex 32`) and `CORS_ORIGIN`; leave the Lambda lines commented out. In `ml.env`, set
+   In `production.env`, set `API_DOMAIN`, `POSTGRES_PASSWORD` (`openssl rand -hex 24`), `ML_SERVICE_TOKEN`
+   (`openssl rand -hex 32`) and `CORS_ORIGIN`; leave `DATABASE_URL` as it is and the Lambda lines
+   commented out. In `ml.env`, set
    `OPENAI_API_KEY`. The first build takes 10–15 minutes on one OCPU.
-5. **Updates:** `cd ~/hirelens && git pull && bash deploy/update.sh`. It rebuilds, applies new migrations
-   and restarts only what changed.
+5. **Updates:** `cd ~/hirelens && git pull && bash deploy/update.sh`. It rebuilds, applies new migrations,
+   reloads the knowledge base and restarts only what changed.
 
 Logs: `docker compose -f deploy/docker-compose.prod.yml logs -f worker ml` (from `~/hirelens`, with
 `APP_REVISION` and `API_DOMAIN` exported as `update.sh` does, or use `docker logs <container>`).

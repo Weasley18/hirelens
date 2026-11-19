@@ -1,0 +1,70 @@
+# Add-on: run Postgres + pgvector on the same VM instead of a managed database.
+# deploy/update.sh includes this file automatically when POSTGRES_PASSWORD is set in
+# production.env. Postgres is reachable only on the private network (no published port).
+#
+# What it stores: the knowledge base (rebuilt by update.sh on every deploy) and minimal
+# analysis records. Candidate documents never touch Postgres; they live in Redis and expire.
+# Nightly dumps go to deploy/backups/ (7 days kept). They are on the same disk, so they protect
+# against mistakes, not against losing the VM; copy them off occasionally if that matters.
+
+x-database-url: &database_url postgresql://hirelens:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/hirelens
+x-needs-db: &needs_db
+  postgres: { condition: service_healthy }
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: hirelens
+      POSTGRES_DB: hirelens
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_connections=40"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    shm_size: 128m
+    mem_limit: 1g
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hirelens -d hirelens"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backup:
+    image: pgvector/pgvector:pg16
+    environment:
+      PGHOST: postgres
+      PGUSER: hirelens
+      PGDATABASE: hirelens
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        while true; do
+          pg_dump -Fc > /backups/hirelens-$$(date +%F).dump.tmp && mv /backups/hirelens-$$(date +%F).dump.tmp /backups/hirelens-$$(date +%F).dump
+          find /backups -name 'hirelens-*.dump' -mtime +7 -delete
+          sleep 86400
+        done
+    volumes: [./backups:/backups]
+    depends_on: *needs_db
+    mem_limit: 128m
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal]
+
+  api:
+    environment: { DATABASE_URL: *database_url }
+    depends_on: *needs_db
+  worker:
+    environment: { DATABASE_URL: *database_url }
+    depends_on: *needs_db
+  ml:
+    environment: { DATABASE_URL: *database_url }
+    depends_on: *needs_db
+  migrate:
+    environment: { DATABASE_URL: *database_url }
+    depends_on: *needs_db
+
+volumes:
+  pgdata:
