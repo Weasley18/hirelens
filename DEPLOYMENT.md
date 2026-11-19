@@ -5,7 +5,7 @@ One supported layout. Other hosts work if they meet the same constraints (see SE
 | Piece | Where | How |
 |---|---|---|
 | Postgres + pgvector | Managed (Neon, Supabase or RDS) | Connection string in `DATABASE_URL` |
-| Inference (ML service) | AWS Lambda container, private | `apps/ml-service/scripts/deploy_aws.sh` |
+| Inference (ML service) | AWS Lambda container, private; calls the model provider's API | `apps/ml-service/scripts/deploy_aws.sh` |
 | API + worker + Redis | One small VM with Docker | `deploy/docker-compose.prod.yml` (Caddy terminates TLS) |
 | Web | Static host that honours `_headers` (Cloudflare Pages or Netlify) | `npm run build:web`, publish `apps/web/dist` |
 
@@ -22,20 +22,36 @@ DATABASE_URL="postgresql://…" npm run ml -- -m rag.ingest
 
 ## 2. Inference on Lambda
 
-Needs the trained model at `apps/ml-service/hirelens-q4.gguf` (see `apps/ml-service/training/README.md`),
-Docker, and the AWS CLI signed in to your account.
+Needs Docker, the AWS CLI signed in to your account, and an API key for the model provider.
+The Lambda only runs retrieval and calls the provider, so no model file is needed.
 
 ```sh
 export AWS_REGION=ap-south-1
 export DATABASE_URL="postgresql://…"
 export ML_SERVICE_TOKEN="$(openssl rand -hex 32)"   # keep it: the worker needs the same value
-LAMBDA_TIMEOUT=80 bash apps/ml-service/scripts/deploy_aws.sh
+export OPENAI_API_KEY="sk-…"                        # stored as an encrypted Lambda variable
+# Optional: HOSTED_MODEL=gpt-6.1-terra (stronger, ~10x cost), HOSTED_REASONING_EFFORT=low|high,
+#           HOSTED_PROVIDER=anthropic|gemini (with that provider's key)
+MODEL_BACKEND=hosted bash apps/ml-service/scripts/deploy_aws.sh
 ```
 
+The default model is `gpt-6-luna` with medium reasoning effort. At about 4,000 input and up to ~3,000
+output tokens (answer plus hidden reasoning) per analysis, that is roughly $0.002 per analysis at
+November 2026 list prices ($0.10 / $0.50 per million tokens); re-check current pricing before launch.
+If the evaluation shows Luna missing gaps or scoring inconsistently, switch to `gpt-6.1-terra`
+($1 / $5) before raising reasoning effort further.
+
+Use a separate API key for production with a monthly spending limit set in the provider's console:
+the Lambda's reserved concurrency of 2 bounds request rate, not spend. Check the provider's API data
+retention and training terms and make sure your privacy notice matches them (step 4).
+
 The script prints `ML_LAMBDA_FUNCTION` and the one IAM permission the worker needs.
-Measure a cold and a warm invocation with a near-maximum-length input before going further. If inference takes
-longer than the timeout, raise `LAMBDA_TIMEOUT` (≤135) and the worker's `INFERENCE_TIMEOUT_SECONDS` (≤140, and above
-the Lambda timeout) together.
+Each provider attempt is limited by `HOSTED_TIMEOUT_SECONDS` (default 30; one retry), which must fit
+inside `LAMBDA_TIMEOUT` (default 80), which must stay below the worker's `INFERENCE_TIMEOUT_SECONDS`
+(default 90). The script checks the first relationship.
+
+*Self-hosted alternative:* train `hirelens-q4.gguf` (see `apps/ml-service/training/README.md`), place
+it in `apps/ml-service/`, and run with `MODEL_BACKEND=gguf`. Measure cold and warm latency on Lambda's CPU.
 
 ## 3. API, worker and Redis on a VM
 
@@ -64,11 +80,14 @@ forward-only; read OPERATIONS.md before rolling back across one.
 Build with the public API origin baked in, then publish `apps/web/dist`:
 
 ```sh
-VITE_API_URL="https://api.example.com" npm run build:web
+VITE_API_URL="https://api.example.com" VITE_INFERENCE_PROVIDER="OpenAI" npm run build:web
 ```
 
+`VITE_INFERENCE_PROVIDER` adds a notice, shown before submission, that documents are sent to that
+provider. Set it whenever the ML service uses `MODEL_BACKEND=hosted`; leave it empty only for `gguf`.
+
 On Cloudflare Pages or Netlify, set build command `npm ci && npm run build:web`, output directory `apps/web/dist`,
-and the `VITE_API_URL` build variable. Both honour the generated `dist/_headers` security policy. Add the site's exact
+and the `VITE_API_URL` and `VITE_INFERENCE_PROVIDER` build variables. Both honour the generated `dist/_headers` security policy. Add the site's exact
 origin to `CORS_ORIGIN` on the API and restart it.
 
 ## 5. Before real users

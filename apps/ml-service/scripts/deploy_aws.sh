@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Deploy a private Lambda. The worker needs lambda:InvokeFunction on this function only.
+#   MODEL_BACKEND=hosted (default): a provider API generates the analysis; needs that provider's key.
+#   MODEL_BACKEND=gguf: the fine-tuned model in hirelens-q4.gguf runs inside the Lambda.
 set -euo pipefail
 REGION="${AWS_REGION:-ap-south-1}"
 REPO="${ECR_REPO:-hirelens-ml}"
@@ -9,11 +11,33 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # Keep below the worker's INFERENCE_TIMEOUT_SECONDS (default 90) so Lambda gives up first.
 TIMEOUT="${LAMBDA_TIMEOUT:-80}"
 [[ "$TIMEOUT" =~ ^[0-9]+$ ]] && (( TIMEOUT >= 10 && TIMEOUT <= 135 )) || { echo "LAMBDA_TIMEOUT must be 10-135 seconds" >&2; exit 1; }
+BACKEND="${MODEL_BACKEND:-hosted}"
+case "$BACKEND" in
+  hosted)
+    DOCKERFILE="$HERE/Dockerfile.hosted"
+    MEMORY="${LAMBDA_MEMORY:-2048}"
+    HOSTED_PROVIDER="${HOSTED_PROVIDER:-openai}"
+    case "$HOSTED_PROVIDER" in
+      anthropic) KEY_VAR=ANTHROPIC_API_KEY ;; openai) KEY_VAR=OPENAI_API_KEY ;; gemini) KEY_VAR=GEMINI_API_KEY ;;
+      *) echo "HOSTED_PROVIDER must be anthropic, openai or gemini" >&2; exit 1 ;;
+    esac
+    [ -n "${!KEY_VAR:-}" ] || { echo "Set $KEY_VAR for HOSTED_PROVIDER=$HOSTED_PROVIDER" >&2; exit 1; }
+    HOSTED_TIMEOUT_SECONDS="${HOSTED_TIMEOUT_SECONDS:-30}"
+    [[ "$HOSTED_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || { echo "HOSTED_TIMEOUT_SECONDS must be whole seconds" >&2; exit 1; }
+    # Two provider attempts plus retrieval must finish inside the Lambda timeout.
+    (( 2 * HOSTED_TIMEOUT_SECONDS + 10 <= TIMEOUT )) || { echo "Need 2 x HOSTED_TIMEOUT_SECONDS + 10 <= LAMBDA_TIMEOUT" >&2; exit 1; }
+    ;;
+  gguf)
+    DOCKERFILE="$HERE/Dockerfile"
+    MEMORY="${LAMBDA_MEMORY:-3008}"
+    ;;
+  *) echo "MODEL_BACKEND must be hosted or gguf" >&2; exit 1 ;;
+esac
 : "${DATABASE_URL:?set DATABASE_URL}"
 : "${ML_SERVICE_TOKEN:?set ML_SERVICE_TOKEN to a random 32-byte hex token}"
 [[ "$ML_SERVICE_TOKEN" =~ ^[a-f0-9]{64}$ ]] || { echo "Invalid service token format" >&2; exit 1; }
 cd "$HERE"
-[ -f hirelens-q4.gguf ] || { echo "Model artifact missing" >&2; exit 1; }
+[ "$BACKEND" != gguf ] || [ -f hirelens-q4.gguf ] || { echo "Model artifact missing" >&2; exit 1; }
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 TAG="$(date -u +%Y%m%d%H%M%S)"
 IMAGE="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:${TAG}"
@@ -31,24 +55,34 @@ aws ecr get-login-password --region "$REGION" | docker login --username AWS --pa
 umask 077
 ENV_FILE="$(mktemp)"
 trap 'rm -f "$ENV_FILE"' EXIT
-export DATABASE_URL ML_SERVICE_TOKEN
+export DATABASE_URL ML_SERVICE_TOKEN BACKEND
+[ "$BACKEND" != hosted ] || export HOSTED_PROVIDER HOSTED_TIMEOUT_SECONDS KEY_VAR "$KEY_VAR" HOSTED_MODEL="${HOSTED_MODEL:-}" HOSTED_REASONING_EFFORT="${HOSTED_REASONING_EFFORT:-}"
 python3 - "$ENV_FILE" <<'PY'
 import json, os, sys
+variables = {"DATABASE_URL": os.environ["DATABASE_URL"],
+             "ML_SERVICE_TOKEN": os.environ["ML_SERVICE_TOKEN"],
+             "MODEL_BACKEND": os.environ["BACKEND"], "APP_ENV": "production"}
+if os.environ["BACKEND"] == "hosted":
+    key_var = os.environ["KEY_VAR"]
+    variables.update({"HOSTED_PROVIDER": os.environ["HOSTED_PROVIDER"],
+                      "HOSTED_TIMEOUT_SECONDS": os.environ["HOSTED_TIMEOUT_SECONDS"],
+                      key_var: os.environ[key_var]})
+    for optional in ("HOSTED_MODEL", "HOSTED_REASONING_EFFORT"):
+        if os.environ.get(optional):
+            variables[optional] = os.environ[optional]
 with open(sys.argv[1], "w") as f:
-    json.dump({"Variables": {"DATABASE_URL": os.environ["DATABASE_URL"],
-              "ML_SERVICE_TOKEN": os.environ["ML_SERVICE_TOKEN"],
-              "MODEL_BACKEND": "gguf", "APP_ENV": "production"}}, f)
+    json.dump({"Variables": variables}, f)
 PY
-docker build --platform linux/amd64 -f "$HERE/Dockerfile" -t "$IMAGE" "$HERE/../.."
+docker build --platform linux/amd64 -f "$DOCKERFILE" -t "$IMAGE" "$HERE/../.."
 docker push "$IMAGE"
 if aws lambda get-function --function-name "$FUNCTION" --region "$REGION" >/dev/null 2>&1; then
   aws lambda update-function-code --function-name "$FUNCTION" --image-uri "$IMAGE" --region "$REGION" >/dev/null
   aws lambda wait function-updated --function-name "$FUNCTION" --region "$REGION"
-  aws lambda update-function-configuration --function-name "$FUNCTION" --memory-size 3008 --timeout "$TIMEOUT" \
+  aws lambda update-function-configuration --function-name "$FUNCTION" --memory-size "$MEMORY" --timeout "$TIMEOUT" \
     --environment "file://${ENV_FILE}" --region "$REGION" >/dev/null
 else
   aws lambda create-function --function-name "$FUNCTION" --package-type Image --code "ImageUri=$IMAGE" \
-    --role "$ROLE_ARN" --memory-size 3008 --timeout "$TIMEOUT" --environment "file://${ENV_FILE}" --region "$REGION" >/dev/null
+    --role "$ROLE_ARN" --memory-size "$MEMORY" --timeout "$TIMEOUT" --environment "file://${ENV_FILE}" --region "$REGION" >/dev/null
   aws lambda wait function-active-v2 --function-name "$FUNCTION" --region "$REGION"
 fi
 aws lambda wait function-updated --function-name "$FUNCTION" --region "$REGION"

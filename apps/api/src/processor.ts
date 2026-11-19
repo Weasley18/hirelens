@@ -1,5 +1,5 @@
 import { UnrecoverableError, type Job } from "bullmq";
-import { AnalysisEnvelopeSchema, AnalyzeRequestSchema, type AnalyzeRequest } from "@hirelens/shared";
+import { AnalysisEnvelopeSchema, AnalyzeRequestSchema, PRODUCTION_BACKENDS, type AnalyzeRequest } from "@hirelens/shared";
 import type { PrivateStore } from "./privacy.js";
 
 export class TransientInferenceError extends Error {
@@ -27,7 +27,7 @@ export function createProcessor(deps: {
       }
       const input = AnalyzeRequestSchema.parse(await deps.store.input(id));
       const result = AnalysisEnvelopeSchema.parse(await deps.infer(input));
-      if (deps.production && result.metadata.backend !== "gguf") throw new Error("Invalid backend");
+      if (deps.production && !PRODUCTION_BACKENDS.includes(result.metadata.backend)) throw new Error("Invalid backend");
       if (await deps.store.save(id, result)) {
         await deps.recordCompletion(id).catch(() => { throw new TransientInferenceError(); });
       }

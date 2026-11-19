@@ -55,6 +55,9 @@ export type JobStatus = "queued" | "active" | "done" | "failed";
 
 export const AnalysisEnvelopeSchema = z.object({
   result: AnalysisResultSchema,
-  metadata: z.object({ backend: z.enum(["stub", "gguf"]), grounded: z.boolean() }).strict(),
+  metadata: z.object({ backend: z.enum(["stub", "gguf", "hosted"]), grounded: z.boolean() }).strict(),
 }).strict();
 export type AnalysisEnvelope = z.infer<typeof AnalysisEnvelopeSchema>;
+
+/** Backends allowed to serve real users. "stub" is a keyword-matching test double. */
+export const PRODUCTION_BACKENDS: readonly string[] = ["gguf", "hosted"];

@@ -5,10 +5,21 @@ and interview questions. HireLens is an anonymous assessment workspace: results 
 and every assessment needs human review.
 
 The application includes a React (JavaScript/JSX + Vite) frontend, Fastify API, Redis/BullMQ worker, PostgreSQL/pgvector
-knowledge base, and Python inference service. The development backend is a clearly labeled,
-deterministic **stub**. Real inference requires a separately trained and evaluated GGUF artifact.
-Production refuses the stub. Model quality, cost, and cold-start latency must be measured on the
-target deployment; no zero-cost or latency guarantee is made.
+knowledge base, and Python inference service. The inference service has three backends:
+
+- **hosted** (recommended): a provider's model API (OpenAI `gpt-6-luna` by default; Anthropic
+  and Gemini also supported) generates the analysis from the same prompt, retrieved reference material and schema
+  validation. No training is needed. Candidate documents are sent to that provider, and the
+  privacy notice says so when `VITE_INFERENCE_PROVIDER` is set.
+- **gguf**: a self-hosted fine-tuned model, if you train one (see the training instructions).
+- **stub**: a clearly labeled, deterministic keyword matcher for development. Production refuses it.
+
+Model quality, cost, and latency must be measured on the target deployment; no zero-cost or
+latency guarantee is made.
+
+To try the hosted backend locally, set `MODEL_BACKEND=hosted` and `OPENAI_API_KEY` in `.env`,
+then run the evaluation directly, without the API, worker or Redis:
+`npm run ml -- -m eval.run_eval --direct`.
 
 ## Local setup
 
@@ -87,7 +98,8 @@ runtime. It does not replace building and testing the production GGUF image.
   6,144-token context with 800 tokens reserved for the answer (`apps/ml-service/inference/limits.py`;
   the TypeScript caps must match, and a test enforces it). Unusually dense text can still exceed the
   budget; the tokenizer check then fails the job with a "shorten them" message instead of truncating.
-  Changing the context size requires retraining and re-evaluating the model.
+  Changing the context size requires retraining and re-evaluating the model. Hosted models have far
+  larger context windows, so these caps are conservative for them.
 
 ## Deployment and training
 

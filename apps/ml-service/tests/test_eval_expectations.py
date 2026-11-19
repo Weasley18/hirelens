@@ -43,3 +43,27 @@ def test_group_spread_and_missing_results():
     assert group_issues(cases, {"a": 70, "b": 74}) == []
     assert "spread 10" in group_issues(cases, {"a": 70, "b": 80})[0]
     assert "no result for b" in group_issues(cases, {"a": 70})[0]
+
+
+def test_direct_mode_runs_cases_in_process_and_saves_results(tmp_path, monkeypatch):
+    import json as _json
+
+    import pytest
+
+    from eval import run_eval
+
+    calls = []
+
+    def fake_direct(resume, jd):
+        calls.append(resume)
+        return {"fitScore": 70 + len(calls) * 20, "verdict": "Solid match with one gap.", "gaps": [],
+                "strengths": ["Python services"], "interviewQuestions": [
+                    {"question": "Describe a service you scaled.", "targets": "Python", "difficulty": "mid"},
+                    {"question": "How do you test a migration?", "targets": "PostgreSQL", "difficulty": "mid"}]}
+
+    monkeypatch.setattr(run_eval, "analyse_direct", fake_direct)
+    out = tmp_path / "results.json"
+    with pytest.raises(SystemExit):  # scores 90 then 110-range spread > 10 must be flagged
+        run_eval.main(["--direct", "--only", "clean-match", "--repeat", "2", "--save", str(out)])
+    saved = _json.loads(out.read_text())
+    assert len(calls) == 2 and saved[0]["id"] == "clean-match" and saved[0]["scores"] == [90, 110]

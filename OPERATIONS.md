@@ -4,7 +4,7 @@
 
 Deploy web, API, worker, ML, and schema changes together. Use immutable application revisions and
 retain the matching model manifest and image digest. Configure NODE_ENV=production on API/worker,
-APP_ENV=production and MODEL_BACKEND=gguf on ML, exact browser origins, HTTPS, private Redis,
+APP_ENV=production and MODEL_BACKEND=hosted (or gguf) on ML, exact browser origins, HTTPS, private Redis,
 and a least-privilege worker role for Lambda. Supply secrets through the hosting platform.
 Never put service tokens into VITE_* variables (or legacy NEXT_PUBLIC_* variables).
 
