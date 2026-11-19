@@ -76,6 +76,36 @@ and users resubmit.
 To roll back, check out the previous revision, set `APP_REVISION` to it and run `up -d` again. Migrations are
 forward-only; read OPERATIONS.md before rolling back across one.
 
+### 3b. Alternative: a 1 GB Oracle Always Free VM (VM.Standard.E2.1.Micro)
+
+Everything in step 3 applies, but nothing is built on the VM (1 GB is not enough to build):
+`deploy/micro/ship.sh` builds the image on your machine, copies it over SSH and starts it, with
+memory limits sized for 1 GB plus a 2 GB swap file.
+
+1. **Oracle network:** *Networking → Virtual cloud networks →* your VCN *→ Security → Security
+   lists → Default security list → Add ingress rules*: source `0.0.0.0/0`, TCP, destination port
+   `80`; then the same for `443`.
+2. **DNS:** create an A record for your API domain (e.g. `api.yourdomain.com`) pointing at the
+   VM's public IP. Caddy needs it to get the HTTPS certificate.
+3. **One-time VM setup** (swap, Docker, Ubuntu firewall ports 80/443), from your machine:
+   ```sh
+   scp -i ~/.ssh/hirelens-vm.key deploy/micro/vm-setup.sh ubuntu@<VM_IP>:
+   ssh -i ~/.ssh/hirelens-vm.key ubuntu@<VM_IP> 'bash vm-setup.sh'
+   ```
+4. **Configuration:** `cp deploy/production.env.example deploy/production.env` and fill it in
+   (`API_DOMAIN`, `DATABASE_URL`, `ML_SERVICE_TOKEN`, `ML_LAMBDA_FUNCTION`, AWS settings,
+   `CORS_ORIGIN`). Leave `APP_REVISION` empty; the script sets it.
+5. **Migrations** run from your machine against the production database:
+   `DATABASE_URL="postgresql://…direct-host…" npm run db:migrate`
+6. **Deploy** (and every later update, after committing):
+   ```sh
+   SSH_KEY=~/.ssh/hirelens-vm.key bash deploy/micro/ship.sh ubuntu@<VM_IP>
+   curl https://api.yourdomain.com/ready
+   ```
+   On Apple Silicon the first build emulates x86 and takes several minutes.
+
+Logs on the VM: `cd ~/hirelens && docker compose logs -f api worker`.
+
 ## 4. Web
 
 Build with the public API origin baked in, then publish `apps/web/dist`:
