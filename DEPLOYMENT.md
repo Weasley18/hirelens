@@ -46,8 +46,9 @@ the Lambda's reserved concurrency of 2 bounds request rate, not spend. Check the
 retention and training terms and make sure your privacy notice matches them (step 4).
 
 The script prints `ML_LAMBDA_FUNCTION` and the one IAM permission the worker needs.
-Each provider attempt is limited by `HOSTED_TIMEOUT_SECONDS` (default 30; one retry), which must fit
-inside `LAMBDA_TIMEOUT` (default 80), which must stay below the worker's `INFERENCE_TIMEOUT_SECONDS`
+`HOSTED_TIMEOUT_SECONDS` (default 60) is the total provider time for one analysis, including a retry;
+a retry only starts if at least 10 seconds remain. It must be at least 10 seconds below
+`LAMBDA_TIMEOUT` (default 80), which must stay below the worker's `INFERENCE_TIMEOUT_SECONDS`
 (default 90). The script checks the first relationship.
 
 *Self-hosted alternative:* train `hirelens-q4.gguf` (see `apps/ml-service/training/README.md`), place

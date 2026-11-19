@@ -55,7 +55,9 @@ def consistency_issues(analysis: dict[str, Any]) -> list[str]:
 
 
 def _tokens(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9+#.]{3,}", text.lower()))
+    # Dots stay inside terms like "node.js" but not at the end of a sentence ("CAN and LIN.").
+    words = (word.strip(".") for word in re.findall(r"[a-z0-9+#.]+", text.lower()))
+    return {word for word in words if len(word) >= 3}
 
 
 def grounding_issues(example: dict[str, Any]) -> list[str]:

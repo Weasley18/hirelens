@@ -22,10 +22,11 @@ case "$BACKEND" in
       *) echo "HOSTED_PROVIDER must be anthropic, openai or gemini" >&2; exit 1 ;;
     esac
     [ -n "${!KEY_VAR:-}" ] || { echo "Set $KEY_VAR for HOSTED_PROVIDER=$HOSTED_PROVIDER" >&2; exit 1; }
-    HOSTED_TIMEOUT_SECONDS="${HOSTED_TIMEOUT_SECONDS:-30}"
+    # Total provider budget for one analysis, across retries.
+    HOSTED_TIMEOUT_SECONDS="${HOSTED_TIMEOUT_SECONDS:-60}"
     [[ "$HOSTED_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || { echo "HOSTED_TIMEOUT_SECONDS must be whole seconds" >&2; exit 1; }
-    # Two provider attempts plus retrieval must finish inside the Lambda timeout.
-    (( 2 * HOSTED_TIMEOUT_SECONDS + 10 <= TIMEOUT )) || { echo "Need 2 x HOSTED_TIMEOUT_SECONDS + 10 <= LAMBDA_TIMEOUT" >&2; exit 1; }
+    # The provider budget plus retrieval must finish inside the Lambda timeout.
+    (( HOSTED_TIMEOUT_SECONDS + 10 <= TIMEOUT )) || { echo "Need HOSTED_TIMEOUT_SECONDS + 10 <= LAMBDA_TIMEOUT" >&2; exit 1; }
     ;;
   gguf)
     DOCKERFILE="$HERE/Dockerfile"

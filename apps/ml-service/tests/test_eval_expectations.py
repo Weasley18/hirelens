@@ -91,3 +91,13 @@ def test_every_case_assertion_uses_known_rules():
     known = {"min_score", "max_score", "min_gaps", "must_gap", "must_not_gap", "group", "tolerance"}
     for case in CASES:
         assert set(case.get("assert", {})) <= known, case["id"]
+
+
+def test_grounding_accepts_a_term_ending_a_sentence():
+    from data_gen.curate import grounding_issues
+
+    jd = "Familiarity with automotive protocols such as CAN and LIN. Node.js is a plus."
+    gaps = [{"skill": "LIN"}, {"skill": "Node.js"}, {"skill": "Zephyr"}]
+    assert grounding_issues({"jd": jd, "output": {"gaps": gaps}}) == [
+        "gap 'Zephyr' is not mentioned in the job description"
+    ]

@@ -22,12 +22,17 @@ provider's response body is put in exceptions or logs.
 
 from __future__ import annotations
 
+import contextvars
+import http.client
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from functools import lru_cache
 from typing import Any
+
+from jsonschema import Draft7Validator
 
 from common import extract_json, load_schema, validate_analysis
 from inference.prompt import HOSTED_GUIDANCE, SYSTEM_PROMPT, build_user_turn
@@ -72,10 +77,19 @@ def model_name() -> str:
 
 
 def timeout_seconds() -> float:
-    value = float(os.environ.get("HOSTED_TIMEOUT_SECONDS", "45"))
-    if not 5 <= value <= 120:
-        raise HostedModelError("HOSTED_TIMEOUT_SECONDS must be between 5 and 120")
+    """Total time for one analysis, across every attempt (not per attempt).
+
+    A second attempt only starts if at least MIN_ATTEMPT_SECONDS remain, so the whole call
+    always finishes inside this budget and the Lambda timeout only needs a small margin over it.
+    """
+    value = float(os.environ.get("HOSTED_TIMEOUT_SECONDS", "60"))
+    if not 10 <= value <= 120:
+        raise HostedModelError("HOSTED_TIMEOUT_SECONDS must be between 10 and 120")
     return value
+
+
+MIN_ATTEMPT_SECONDS = 10
+_deadline: contextvars.ContextVar[float] = contextvars.ContextVar("hosted_deadline", default=0.0)
 
 
 def reasoning_effort() -> str:
@@ -110,17 +124,35 @@ def output_schema() -> dict[str, Any]:
 _STRICT_UNSUPPORTED = ("minLength", "maxLength", "minimum", "maximum", "minItems", "maxItems")
 
 
+def _limits_text(node: dict) -> str:
+    """The dropped constraints, restated as the field description the model reads."""
+    parts = []
+    if "minLength" in node or "maxLength" in node:
+        parts.append(f"{node.get('minLength', 0)}-{node['maxLength']} characters" if "maxLength" in node
+                     else f"at least {node['minLength']} characters")
+    if "minimum" in node or "maximum" in node:
+        parts.append(f"integer {node.get('minimum', 0)}-{node.get('maximum')}")
+    if "minItems" in node or "maxItems" in node:
+        parts.append(f"{node.get('minItems', 0)}-{node.get('maxItems', 'any')} items")
+    return ("Must be " + ", ".join(parts) + ".") if parts else ""
+
+
 def strict_schema(node: Any = None) -> Any:
     """The output schema reduced to the keywords every strict Structured Outputs schema accepts.
 
     Shape, types, enums, required fields and additionalProperties: false stay, so the API
-    guarantees the structure. Length and count limits are dropped here and enforced by
-    validate_analysis after the call (HOSTED_GUIDANCE states them to the model).
+    guarantees the structure. Length and count limits are dropped here, restated in each
+    field's description (read by the model as it writes that field), and enforced by
+    validate_analysis after the call.
     """
     if node is None:
         node = output_schema()
     if isinstance(node, dict):
-        return {k: strict_schema(v) for k, v in node.items() if k not in _STRICT_UNSUPPORTED}
+        reduced = {k: strict_schema(v) for k, v in node.items() if k not in _STRICT_UNSUPPORTED}
+        limits = _limits_text(node)
+        if limits:
+            reduced["description"] = (node.get("description", "") + " " + limits).strip()
+        return reduced
     if isinstance(node, list):
         return [strict_schema(v) for v in node]
     return node
@@ -139,14 +171,19 @@ def _post(url: str, body: dict, headers: dict[str, str]) -> dict:
         url, data=json.dumps(body).encode(), method="POST",
         headers={"Content-Type": "application/json", **headers},
     )
+    remaining = _deadline.get() - time.monotonic() if _deadline.get() else timeout_seconds()
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds()) as response:
+        with urllib.request.urlopen(request, timeout=max(remaining, 1.0)) as response:
             return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         # The body is deliberately dropped: some providers echo parts of the request in errors.
-        raise HostedModelError(f"{provider()} returned HTTP {exc.code}") from None
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-        raise HostedModelError(f"{provider()} request failed") from None
+        raise HostedModelError(f"HTTP {exc.code}") from None
+    except (TimeoutError, OSError) as exc:
+        # socket.timeout is only a TimeoutError from Python 3.10; on 3.9 it is a bare OSError.
+        reason = "timeout" if "timed out" in str(exc).lower() or isinstance(exc, TimeoutError) else "network error"
+        raise HostedModelError(reason) from None
+    except (http.client.HTTPException, json.JSONDecodeError, UnicodeDecodeError):
+        raise HostedModelError("unreadable response") from None
 
 
 def _call_anthropic(user_turn: str) -> dict:
@@ -170,7 +207,7 @@ def _call_anthropic(user_turn: str) -> dict:
     for block in payload.get("content", []):
         if block.get("type") == "tool_use" and block.get("name") == TOOL_NAME:
             return block.get("input") or {}
-    raise HostedModelError("anthropic returned no analysis")
+    raise HostedModelError("no analysis in response")
 
 
 def _call_openai(user_turn: str) -> dict:
@@ -195,12 +232,18 @@ def _call_openai(user_turn: str) -> dict:
     payload = _post("https://api.openai.com/v1/chat/completions", body,
                     {"Authorization": f"Bearer {_api_key()}"})
     try:
-        message = payload["choices"][0]["message"]
-        if message.get("refusal"):
-            raise ValueError("refused")
-        return extract_json(message["content"])
-    except (KeyError, IndexError, TypeError, ValueError):
-        raise HostedModelError("openai returned no analysis") from None
+        choice = payload["choices"][0]
+        message = choice["message"]
+    except (KeyError, IndexError, TypeError):
+        raise HostedModelError("no answer in response") from None
+    if message.get("refusal"):
+        raise HostedModelError("refused")
+    if choice.get("finish_reason") == "length":
+        raise HostedModelError("answer cut off at the token limit")
+    try:
+        return extract_json(message.get("content") or "")
+    except (TypeError, ValueError):
+        raise HostedModelError("answer was not JSON") from None
 
 
 def _call_gemini(user_turn: str) -> dict:
@@ -221,23 +264,44 @@ def _call_gemini(user_turn: str) -> dict:
         text = "".join(p.get("text", "") for p in payload["candidates"][0]["content"]["parts"])
         return extract_json(text)
     except (KeyError, IndexError, TypeError, ValueError):
-        raise HostedModelError("gemini returned no analysis") from None
+        raise HostedModelError("no analysis in response") from None
 
 
 _CALLERS = {"anthropic": _call_anthropic, "openai": _call_openai, "gemini": _call_gemini}
+
+
+def _invalid_fields(analysis: Any) -> str:
+    """Which fields broke which rule, e.g. "strengths.2 maxLength". Never includes values."""
+    if not isinstance(analysis, dict):
+        return "not an object"
+    errors = sorted(Draft7Validator(load_schema()).iter_errors(analysis), key=lambda e: list(e.path))
+    return ", ".join(f"{'.'.join(map(str, e.path)) or 'root'} {e.validator}" for e in errors[:4])
 
 
 def generate(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
     check_configuration()
     user_turn = build_user_turn(resume, jd, chunks)
     caller = _CALLERS[provider()]
-    for _attempt in range(ATTEMPTS):
-        try:
-            analysis = caller(user_turn)
-        except HostedModelError as exc:
-            if "HTTP 4" in str(exc) and "HTTP 429" not in str(exc):
-                raise  # bad key, bad model name, bad request: retrying will not help
-            continue
-        if isinstance(analysis, dict) and not validate_analysis(analysis):
-            return analysis
-    raise HostedModelError(f"{provider()} did not return a valid analysis")
+    deadline = time.monotonic() + timeout_seconds()
+    token = _deadline.set(deadline)
+    reasons: list[str] = []
+    try:
+        for attempt in range(1, ATTEMPTS + 1):
+            if attempt > 1 and deadline - time.monotonic() < MIN_ATTEMPT_SECONDS:
+                reasons.append("no time left to retry")
+                break
+            try:
+                analysis = caller(user_turn)
+            except HostedModelError as exc:
+                reason = str(exc)
+                if reason.startswith("HTTP 4") and reason != "HTTP 429":
+                    # Bad key, unknown model, bad request: retrying will not help.
+                    raise HostedModelError(f"{provider()} rejected the request ({reason})") from None
+                reasons.append(f"attempt {attempt}: {reason}")
+                continue
+            if isinstance(analysis, dict) and not validate_analysis(analysis):
+                return analysis
+            reasons.append(f"attempt {attempt}: invalid {_invalid_fields(analysis)}")
+    finally:
+        _deadline.reset(token)
+    raise HostedModelError(f"{provider()} did not return a valid analysis ({'; '.join(reasons)})")
