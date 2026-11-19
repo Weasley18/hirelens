@@ -193,3 +193,51 @@ def test_production_accepts_hosted_backend_and_requires_its_key(monkeypatch):
     with pytest.raises(hosted.HostedModelError):
         with TestClient(server.app):
             pass
+
+
+def test_python39_socket_timeout_is_caught_and_retried(monkeypatch):
+    # On Python 3.9, a read timeout is socket.timeout, an OSError but not a TimeoutError.
+    monkeypatch.setenv("HOSTED_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    seen = _respond(monkeypatch, OSError("The read operation timed out"), _openai_reply(FIXTURE))
+    assert hosted.generate(RESUME, JD, []) == FIXTURE and len(seen) == 2
+
+
+def test_failure_message_names_each_reason_without_any_content(monkeypatch):
+    monkeypatch.setenv("HOSTED_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    too_long = dict(FIXTURE, verdict="SECRET-RESUME-MARKER " * 20)
+    cut_off = {"choices": [{"finish_reason": "length", "message": {"content": "{", "refusal": None}}]}
+    _respond(monkeypatch, cut_off, _openai_reply(too_long))
+    with pytest.raises(hosted.HostedModelError) as excinfo:
+        hosted.generate(RESUME, JD, [])
+    message = str(excinfo.value)
+    assert "attempt 1: answer cut off at the token limit" in message
+    assert "attempt 2: invalid verdict maxLength" in message
+    assert "SECRET-RESUME-MARKER" not in message
+
+
+def test_retry_only_starts_when_enough_of_the_budget_remains(monkeypatch):
+    monkeypatch.setenv("HOSTED_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("HOSTED_TIMEOUT_SECONDS", "20")
+    clock = [1000.0]
+    monkeypatch.setattr(hosted.time, "monotonic", lambda: clock[0])
+    timeouts = []
+
+    def slow_failure(request, timeout):
+        timeouts.append(timeout)
+        clock[0] += 15  # the first attempt uses 15 of the 20 seconds
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(hosted.urllib.request, "urlopen", slow_failure)
+    with pytest.raises(hosted.HostedModelError, match="no time left to retry"):
+        hosted.generate(RESUME, JD, [])
+    assert timeouts == [20.0]  # the attempt was given the whole remaining budget, and no retry ran
+
+
+def test_strict_schema_restates_dropped_limits_for_the_model():
+    schema = hosted.strict_schema()
+    assert "120 characters" in schema["properties"]["strengths"]["items"]["description"]
+    assert "1-8 items" in schema["properties"]["strengths"]["description"]
+    assert "maxLength" not in json.dumps(schema)
