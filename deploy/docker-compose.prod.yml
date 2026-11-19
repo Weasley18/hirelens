@@ -1,9 +1,11 @@
-# Single-VM production layout for the API and worker. Inference runs on AWS Lambda
-# (apps/ml-service/scripts/deploy_aws.sh) and the web app on a static host; see DEPLOYMENT.md.
+# Single-VM production layout: API, worker, ML service, Redis and Caddy (HTTPS), built and run on
+# the VM (needs ~2 GB of RAM; an Oracle Ampere A1 VM with 6 GB is plenty). The ML service calls the
+# hosted model provider and is reachable only on the private network. The web app goes on a static
+# host; see DEPLOYMENT.md. With ML_LAMBDA_FUNCTION set, the worker uses Lambda instead.
 #
 #   cp deploy/production.env.example deploy/production.env   # fill in, never commit
-#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/production.env run --rm migrate
-#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/production.env up -d
+#   cp deploy/ml.env.example deploy/ml.env                   # provider key, never commit
+#   bash deploy/update.sh                                     # build, migrate, start
 #
 # Postgres is expected to be managed (Neon, Supabase, RDS) with pgvector available.
 # Redis runs here, private to this network, with persistence disabled on purpose: it holds
@@ -19,6 +21,7 @@ x-app: &app
   environment:
     NODE_ENV: production
     REDIS_URL: redis://redis:6379
+    ML_SERVICE_URL: http://ml:8000
   restart: unless-stopped
   depends_on: [redis]
   read_only: true
@@ -39,6 +42,35 @@ services:
   worker:
     <<: *app
     command: ["node", "dist/worker.js"]
+    depends_on:
+      redis: { condition: service_started }
+      ml: { condition: service_healthy }
+
+  ml:
+    image: hirelens-ml:${APP_REVISION:?set APP_REVISION}
+    build:
+      context: ..
+      dockerfile: apps/ml-service/Dockerfile.server
+    # production.env: DATABASE_URL and ML_SERVICE_TOKEN. ml.env: the model provider key, which
+    # only this service receives.
+    env_file: [production.env, ml.env]
+    environment:
+      APP_ENV: production
+      MODEL_BACKEND: hosted
+      HOME: /tmp
+    expose: ["8000"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1536m
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
 
   migrate:
     image: hirelens-migrate:${APP_REVISION:?set APP_REVISION}

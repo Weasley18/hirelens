@@ -143,3 +143,15 @@ the Sol tier ($2 / $10) is not needed for this task. The request follows reasoni
 unless effort is `none`, `max_completion_tokens` sized for hidden reasoning, strict `json_schema`
 Structured Outputs (length/count limits enforced by our validator), `store: false`, and refusals
 treated as invalid answers. Not verified against the live API from this environment.
+
+## Single-VM deployment — 2026-11-20
+
+The recommended layout is now one VM running the API, worker, ML service (`Dockerfile.server`,
+uvicorn, hosted backend), Redis and Caddy, plus managed Postgres and a static web host; no AWS account
+is needed. The worker reaches the ML service at `http://ml:8000` on the private Docker network;
+production allows plain HTTP only for such single-label container names (`apps/api/src/ml-url.ts`).
+The provider key is in `deploy/ml.env`, given only to the ML container. `deploy/update.sh` builds,
+migrates and restarts on the VM. Lambda (step 2b) and a 1 GB VM (step 3b) remain documented
+alternatives. Verified here: API tests, the ML server started with production settings (health 200,
+unauthenticated /infer 401, missing provider key fails startup), Compose validation and shellcheck.
+Not verified here: the image builds and a real VM run.

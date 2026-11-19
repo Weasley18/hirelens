@@ -245,3 +245,11 @@ test("production accepts hosted and gguf results but never the stub", async () =
     }
   }
 });
+
+test("production ML URL: HTTPS, or an internal container name only", async () => {
+  const { isAllowedProductionMlUrl } = await import("../src/ml-url.ts");
+  for (const ok of ["https://ml.example.com", "http://ml:8000", "http://hirelens-ml:8000"]) assert.equal(isAllowedProductionMlUrl(ok), true, ok);
+  for (const bad of ["http://ml.example.com", "http://10.0.0.5:8000", "http://localhost:8000", "ftp://ml", "not a url"]) {
+    assert.equal(isAllowedProductionMlUrl(bad), false, bad);
+  }
+});

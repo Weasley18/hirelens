@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup of a fresh Ubuntu 22.04/24.04 VM for HireLens. Run ON the VM:
+# One-time setup of a fresh Ubuntu 22.04/24.04 VM for HireLens (any size, x86 or ARM). Run ON the VM:
 #   bash vm-setup.sh
 # Safe to re-run. Adds swap, installs Docker, and opens ports 80/443 in Ubuntu's firewall.
 # (Oracle's network security list must also allow 80/443; see DEPLOYMENT.md.)
@@ -7,7 +7,7 @@ set -euo pipefail
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 
-# 1. Swap: 1 GB of RAM is not enough headroom on its own for Docker plus four services.
+# 1. Swap: headroom for image builds, and essential on a 1 GB VM.
 if ! swapon --show | grep -q /swapfile; then
   $SUDO fallocate -l 2G /swapfile
   $SUDO chmod 600 /swapfile
@@ -40,12 +40,11 @@ done
 # 3. Docker Engine and the Compose plugin, from Ubuntu's own packages.
 if ! command -v docker >/dev/null; then
   $SUDO apt-get update -q
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -q docker.io docker-compose-v2
+  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -q docker.io docker-compose-v2 docker-buildx git
   $SUDO systemctl enable --now docker
 fi
 $SUDO usermod -aG docker "$(id -un)"
 
-mkdir -p "$HOME/hirelens"
 echo "Done. Log out and back in once so your user can run docker without sudo."
 free -h | sed -n '1,3p'
 docker --version 2>/dev/null || true
