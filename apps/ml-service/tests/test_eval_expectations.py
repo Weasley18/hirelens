@@ -67,3 +67,27 @@ def test_direct_mode_runs_cases_in_process_and_saves_results(tmp_path, monkeypat
         run_eval.main(["--direct", "--only", "clean-match", "--repeat", "2", "--save", str(out)])
     saved = _json.loads(out.read_text())
     assert len(calls) == 2 and saved[0]["id"] == "clean-match" and saved[0]["scores"] == [90, 110]
+
+
+def test_groups_compare_average_scores_across_repeats():
+    cases = [{"id": "a", "assert": {"group": "g", "tolerance": 5}}, {"id": "b", "assert": {"group": "g", "tolerance": 5}}]
+    # The run that triggered a false alarm: first runs 84 vs 78, but identical 78-84 ranges.
+    assert group_issues(cases, {"a": [84, 80, 78], "b": [78, 82, 84]}) == []
+    issues = group_issues(cases, {"a": [90, 92, 91], "b": [80, 82, 81]})
+    assert issues and "average spread 10.0" in issues[0]
+
+
+def test_must_not_gap_and_word_start_matching():
+    rules = {"assert": {"must_gap": ["go"], "must_not_gap": ["break", "tenure"]}}
+    ok = _result(40, ["Production Go services", "Kubernetes"])
+    assert expectation_issues(rules, ok) == []
+    # "go" must not be satisfied by "algorithms"; listing a career break as a gap is flagged.
+    issues = expectation_issues(rules, _result(40, ["Algorithms", "Career break", "Short tenure"]))
+    assert any("expected a gap for 'go'" in i for i in issues)
+    assert sum("should not be treated as a skills gap" in i for i in issues) == 2
+
+
+def test_every_case_assertion_uses_known_rules():
+    known = {"min_score", "max_score", "min_gaps", "must_gap", "must_not_gap", "group", "tolerance"}
+    for case in CASES:
+        assert set(case.get("assert", {})) <= known, case["id"]
