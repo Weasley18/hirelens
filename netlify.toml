@@ -1,0 +1,12 @@
+# Netlify build for the web app (apps/web). Netlify installs dependencies from the root
+# package-lock.json, runs the command below, and publishes apps/web/dist, including the
+# generated _headers security policy.
+[build]
+  command = "npm run build:web"
+  publish = "apps/web/dist"
+
+# Compiled into the site at build time. Both values are public (they appear in the site's code).
+[build.environment]
+  NODE_VERSION = "22"
+  VITE_API_URL = "https://api.harshringsia.me"
+  VITE_INFERENCE_PROVIDER = "OpenAI"

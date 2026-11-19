@@ -139,9 +139,11 @@ VITE_API_URL="https://api.example.com" VITE_INFERENCE_PROVIDER="OpenAI" npm run 
 `VITE_INFERENCE_PROVIDER` adds a notice, shown before submission, that documents are sent to that
 provider. Set it whenever the ML service uses `MODEL_BACKEND=hosted`; leave it empty only for `gguf`.
 
-On Cloudflare Pages or Netlify, set build command `npm ci && npm run build:web`, output directory `apps/web/dist`,
-and the `VITE_API_URL` and `VITE_INFERENCE_PROVIDER` build variables. Both honour the generated `dist/_headers` security policy. Add the site's exact
-origin to `CORS_ORIGIN` on the API and restart it.
+**Netlify** (configured by `netlify.toml` in the repo root): *Add new project → Import an existing
+project → GitHub*, pick the repo and deploy; the build settings and the `VITE_` values come from
+`netlify.toml` (edit `VITE_API_URL` there if your API domain changes). The site is served at
+`https://<site-name>.netlify.app` with the `_headers` security policy applied. Put that exact origin in
+`CORS_ORIGIN` on the VM and run `bash deploy/update.sh` again.
 
 ## 5. Before real users
 
