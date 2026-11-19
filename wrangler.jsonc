@@ -1,0 +1,15 @@
+// Cloudflare Workers static-assets deployment of the web app (apps/web).
+// Build command in the Cloudflare dashboard (VITE_ values are compiled into the site, so they must
+// be present at build time, not as Worker runtime variables):
+//   VITE_API_URL=https://api.harshringsia.me VITE_INFERENCE_PROVIDER=OpenAI npm run build:web
+// Deploy command: npx wrangler deploy
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "hirelens",
+  "compatibility_date": "2026-11-16",
+  "assets": {
+    "directory": "./apps/web/dist",
+    // Unknown paths serve index.html so client-side routes work.
+    "not_found_handling": "single-page-application"
+  }
+}

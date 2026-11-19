@@ -139,9 +139,19 @@ VITE_API_URL="https://api.example.com" VITE_INFERENCE_PROVIDER="OpenAI" npm run 
 `VITE_INFERENCE_PROVIDER` adds a notice, shown before submission, that documents are sent to that
 provider. Set it whenever the ML service uses `MODEL_BACKEND=hosted`; leave it empty only for `gguf`.
 
-On Cloudflare Pages or Netlify, set build command `npm ci && npm run build:web`, output directory `apps/web/dist`,
-and the `VITE_API_URL` and `VITE_INFERENCE_PROVIDER` build variables. Both honour the generated `dist/_headers` security policy. Add the site's exact
-origin to `CORS_ORIGIN` on the API and restart it.
+**Cloudflare Workers** (Cloudflare's current flow; `wrangler.jsonc` in the repo root configures it):
+*Workers & Pages → Create → Import a repository*, pick the repo, then set
+- Build command: `VITE_API_URL=https://api.yourdomain.com VITE_INFERENCE_PROVIDER=OpenAI npm run build:web`
+- Deploy command: `npx wrangler deploy` (the default)
+- Preview builds: off (preview URLs are not in `CORS_ORIGIN`, so they could not reach the API anyway)
+
+The `VITE_` values go in the build command because they are compiled into the site; variables set as
+Worker variables are only available at runtime. The site is served at
+`https://hirelens.<your-subdomain>.workers.dev`, with the `_headers` security policy applied.
+Put that exact origin in `CORS_ORIGIN` on the VM and run `bash deploy/update.sh` again.
+
+On Netlify, set build command `npm ci && npm run build:web`, output directory `apps/web/dist`,
+and the `VITE_API_URL` and `VITE_INFERENCE_PROVIDER` build variables.
 
 ## 5. Before real users
 
