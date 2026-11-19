@@ -32,3 +32,5 @@ apps/ml-service/quantization-requirements.lock
 
 .codesight/
 deploy/production.env
+deploy/ml.env
+deploy/backups/

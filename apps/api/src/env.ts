@@ -1,6 +1,7 @@
 import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { isAllowedProductionMlUrl } from "./ml-url.js";
 
 config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 const EnvSchema = z.object({
@@ -19,8 +20,8 @@ const EnvSchema = z.object({
   if (env.CORS_ORIGIN.split(",").some(origin => !/^https?:\/\/[^/\s*]+$/.test(origin.trim()))) {
     ctx.addIssue({ code: "custom", path: ["CORS_ORIGIN"], message: "explicit origins required" });
   }
-  if (env.NODE_ENV === "production" && !env.ML_LAMBDA_FUNCTION && !env.ML_SERVICE_URL.startsWith("https://")) {
-    ctx.addIssue({ code: "custom", path: ["ML_SERVICE_URL"], message: "HTTPS required in production" });
+  if (env.NODE_ENV === "production" && !env.ML_LAMBDA_FUNCTION && !isAllowedProductionMlUrl(env.ML_SERVICE_URL)) {
+    ctx.addIssue({ code: "custom", path: ["ML_SERVICE_URL"], message: "HTTPS or an internal service name required in production" });
   }
 });
 const parsed = EnvSchema.safeParse(process.env);

@@ -1,0 +1,75 @@
+# HireLens API + worker on a 1 GB VM (Oracle Always Free VM.Standard.E2.1.Micro).
+# Images are built on another machine and loaded here by deploy/micro/ship.sh; nothing is
+# built on the VM. Migrations also run from that machine. Memory limits keep the four
+# services, Docker and the OS inside 1 GB (plus the swap file set up by vm-setup.sh).
+
+x-app: &app
+  image: hirelens-api:${APP_REVISION:?set APP_REVISION}
+  pull_policy: never
+  env_file: production.env
+  environment:
+    NODE_ENV: production
+    REDIS_URL: redis://redis:6379
+    NODE_OPTIONS: --max-old-space-size=160
+  restart: unless-stopped
+  depends_on: [redis]
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  mem_limit: 256m
+  networks: [internal]
+  logging: &logging
+    driver: json-file
+    options: { max-size: "5m", max-file: "2" }
+
+services:
+  api:
+    <<: *app
+    expose: ["3000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  worker:
+    <<: *app
+    command: ["node", "dist/worker.js"]
+
+  redis:
+    image: redis:7-alpine
+    # Nothing on disk by design (documents must expire); 64 MB holds far more than the
+    # few concurrent analyses this VM can serve.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 96m
+    networks: [internal]
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on: [api]
+    mem_limit: 96m
+    logging: *logging
+    networks:
+      # Fixed address so the API trusts exactly this proxy (TRUST_PROXY=172.28.0.10).
+      internal: { ipv4_address: 172.28.0.10 }
+
+networks:
+  internal:
+    ipam:
+      config: [{ subnet: 172.28.0.0/24 }]
+
+volumes:
+  caddy_data:
+  caddy_config:
