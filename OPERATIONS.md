@@ -25,6 +25,17 @@ DEPLOYMENT.md describes one supported layout for API/worker (Docker Compose on a
 - Worker JSON events include processing time, queue wait time, completion, retry, and retrieval
   grounding status. Never log documents, generated assessments, access tokens, or upstream errors.
 
+- `analysis_completed` events also carry the model, attempts, tokens, cost and how many claims were
+  removed for lacking a quote, and the same values are stored on the anonymous `Analysis` row.
+  `/stats` reports the last 30 days (p50/p95/p99 latency including queue wait, cost per analysis,
+  error rate, citation support); `node dist/metrics-report.js --days 7` prints the same from inside
+  the API container.
+- Traces: with `OTEL_EXPORTER_OTLP_ENDPOINT` set (production compose points it at the `jaeger`
+  service), each analysis is one trace across API, worker, ML service and provider calls. Open the UI
+  through an SSH tunnel (`ssh -L 16686:127.0.0.1:16686 ubuntu@<vm>`, then http://localhost:16686) and
+  search by service `hirelens-worker`; slow analyses show which stage (queue wait, retrieval, a
+  provider attempt, a retry) took the time. Exporter failures never fail an analysis.
+
 Configure the host's log-based alerts for repeated terminal failures, absent worker heartbeat,
 ML readiness failures, sustained retrieval degradation, and processing/queue waits approaching
 client or input-expiry limits. Monitor CPU/RSS and Lambda duration/memory at the host/platform.

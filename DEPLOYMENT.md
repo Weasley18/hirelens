@@ -91,6 +91,10 @@ with about 2 GB of RAM works the same way. Replace `<VM_IP>` and the key path wi
 
 Logs: `docker compose -f deploy/docker-compose.prod.yml logs -f worker ml` (from `~/hirelens`, with
 `APP_REVISION` and `API_DOMAIN` exported as `update.sh` does, or use `docker logs <container>`).
+Traces: `ssh -i ~/.ssh/hirelens-vm.key -L 16686:127.0.0.1:16686 ubuntu@<VM_IP>`, then open
+http://localhost:16686 (Jaeger runs in the same compose project; set `OTEL_EXPORTER_OTLP_ENDPOINT=` in
+`production.env` to turn tracing off). Latency and cost summary:
+`docker exec "$(docker ps -qf name=-api-)" node dist/metrics-report.js --days 7`.
 Redis is private to the compose network and keeps nothing on disk, by design: a restart loses in-flight
 analyses, and users resubmit.
 

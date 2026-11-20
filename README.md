@@ -8,7 +8,8 @@ tailored to both. Download it as a designed PDF report.**
 15 minutes and results within an hour)
 
 HireLens is a portfolio case study in shipping an LLM feature responsibly: privacy by design,
-measured quality instead of vibes, and infrastructure that costs $0 a month to run. This README
+measured quality instead of vibes (claims verified against the documents, an evaluation gate in CI,
+a statistical fairness audit, a trace for every analysis), and infrastructure that costs $0 a month to run. This README
 covers the problem, the decisions and their trade-offs, how the system was evaluated, and what I
 would do next. Setup instructions are at the end.
 
@@ -38,10 +39,14 @@ The goal was a tool that supports a human reviewer without replacing them:
 3. **Ground it.** HireLens extracts the skills involved and retrieves relevant reference material from
    a curated knowledge base (interviewing craft, competency rubrics, and seven technical domains).
 4. **Watch it arrive.** The model writes a structured assessment: a 0–100 fit score with a one-sentence
-   verdict, up to 8 evidenced strengths, up to 8 gaps with severity, and interview questions that target
+   verdict, up to 8 strengths, up to 8 gaps with severity, and interview questions that target
    them. Fields appear as the model writes them, marked as a draft, until the complete answer passes
    validation.
-5. **Take it with you.** Download one candidate or the whole batch as a designed PDF report, then delete
+5. **Check every claim.** Each strength quotes the resume and each gap quotes the job description,
+   word for word. The quotes are verified against the documents before anyone sees them; click one to
+   see it highlighted in its original context. Claims whose quotes can't be found are removed, and the
+   result says how many were checked.
+6. **Take it with you.** Download one candidate or the whole batch as a designed PDF report, then delete
    the analysis, or let it expire: documents within 15 minutes, results within the hour.
 
 ## Architecture
@@ -55,7 +60,8 @@ flowchart LR
     api -->|queue| redis[(Redis<br/>documents expire in 15 min)]
     worker[Worker<br/>BullMQ] --> redis
     worker -->|private network,<br/>streamed fields| ml[ML service<br/>FastAPI]
-    ml --> pg[(Postgres + pgvector<br/>knowledge base)]
+    ml --> pg[(Postgres + pgvector<br/>knowledge base,<br/>anonymous metrics)]
+    api & worker & ml -.->|OpenTelemetry spans| jaeger[Jaeger<br/>traces]
   end
   ml -->|streamed structured output| llm[OpenAI<br/>GPT-6 Luna]
 ```
@@ -65,8 +71,9 @@ flowchart LR
 | **Web** (React, Vite) | Static single-page app with a strict Content Security Policy. Extracts PDF text in the browser (pdf.js), runs batches one resume at a time, shows draft fields as they stream in. Holds access tokens in memory only. |
 | **API** (Fastify, TypeScript) | Validates input, rate-limits (5 submissions a minute), stores documents in Redis with a TTL, queues the job, serves draft previews, and renders PDF reports with Puppeteer and Chromium. |
 | **Worker** (BullMQ) | Runs one analysis at a time, reads the ML service's field stream into a short-lived Redis preview, validates the final result against the shared contract, retries transient failures once. |
-| **ML service** (Python, FastAPI) | Skill extraction, retrieval from pgvector (`bge-small-en-v1.5` embeddings), prompt construction, a streamed model call parsed field by field, schema validation. |
-| **Postgres + pgvector** | The knowledge base and anonymous completion counts. Never candidate documents or results. |
+| **ML service** (Python, FastAPI) | Skill extraction, retrieval from pgvector (`bge-small-en-v1.5` embeddings), prompt construction, a streamed model call parsed field by field, schema validation, quote verification, token and cost accounting. |
+| **Postgres + pgvector** | The knowledge base and one anonymous row per analysis (latency, tokens, cost, citation counts). Never candidate documents or results. |
+| **Jaeger** | Receives OpenTelemetry traces that follow each analysis from submission to the model provider. Holds ids, timings and token counts only; reachable through an SSH tunnel. |
 | **Shared contract** | One JSON Schema used by TypeScript (Zod) and Python, with tests that keep both sides identical. |
 
 ## Key decisions
@@ -184,6 +191,47 @@ output in a browser engine is a real attack surface, so:
 
 A warm render takes about 0.2 seconds.
 
+### 8. Evidence you can check, enforced in code rather than requested in the prompt
+
+"Grounded in the documents" was originally a prompt instruction, which is a hope, not a guarantee. Now
+the output schema makes the evidence a field: every strength is `{text, evidence}` where the evidence is
+copied word for word from the resume, and every gap carries the job description's own words for the
+requirement. The ML service then **checks each quote against the documents** before the answer is
+accepted:
+
+- Matching tolerates what PDFs and models do to text: case, line breaks, curly quotes, dashes, bullets,
+  and `…` between fragments (in order). It does not tolerate a changed word, so a paraphrase or an
+  invented achievement fails. Quotes must be at least 8 characters to count.
+- An answer with an unsupported quote is treated like an invalid one and **retried**. If retries run out,
+  only the unsupported claims are removed; if no supported strength remains, the analysis fails.
+- The same rule applies to every backend, and to streamed drafts: a draft never shows a claim the final
+  answer would reject.
+- The result reports `{checked, removed}`, shown as "All 7 claims quote the documents" or "6 claims
+  quote the documents · 1 unsupported claim removed", in the app and in the PDF report. In the app,
+  clicking a quote shows it highlighted in the original document, from text kept only in the
+  browser's memory.
+
+The cost is one more retry in the rare case of a bad quote, and the benefit is a product promise that
+is tested: in the evaluation, "claims backed by a quote" is a tracked metric with a CI threshold (90%).
+
+### 9. Observability: following one analysis through five processes
+
+An analysis crosses the API, a Redis queue, the worker, the ML service and the model provider, so a
+slow or expensive one is invisible from any single log. Each analysis is now **one OpenTelemetry
+trace**: `analysis.submit` (API) → `analysis.process` (worker; the trace context rides in the job's
+data, the only thing besides an id the queue ever holds) → `ml.request` → `ml.infer` → `retrieve`,
+`generate`, one `provider.call` per attempt with `gen_ai.*` token attributes, and `verify`. Spans are
+created by hand, few and deliberate, and carry ids, timings, token counts, cost and outcomes, never
+document text or exception messages (tests check both).
+
+The ML service also counts tokens for every provider call (including OpenAI's streamed usage chunk,
+reasoning and cached tokens, and failed attempts), prices them, and returns the totals **beside** the
+result. The worker strips them before saving the result and records them on the anonymous row, so
+`/stats` and `npm run metrics` report latency percentiles (queue wait included, because that is what a
+user waits for), cost per analysis, tokens, error rate and citation support. Tracing is off unless
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set; production sends it to a Jaeger container whose UI listens only on
+the VM's loopback.
+
 ## Evaluation
 
 Quality claims are only as good as the test behind them, so HireLens has a 24-case evaluation suite
@@ -229,6 +277,39 @@ number.
 contractor case tightened (75–88 → 78–82), the over-qualified case widened (45–56 → 42–58), the
 fairness pairs stayed within tolerance, and analyses averaged 6–12 seconds each in that earlier run.
 
+### Evaluation in CI, tracked over time
+
+The suite is also a **quality gate**. A pull request that touches the prompt, inference code, schema,
+retrieval or the evaluation runs a representative eight-case subset (a strong match and a non-match,
+prompt injection, a negated skill, an off-domain role and a counterfactual pair) against the real model
+in GitHub Actions. It fails on a flagged case, a counterfactual gap above tolerance or fewer than 90% of
+claims quoting the documents, and comments a summary on the pull request comparing it with the last
+recorded run. A manual run evaluates every case and commits the result to `eval/history/`, from
+which [EVALUATION.md](EVALUATION.md) is generated: the latest run, charts over time and every recorded
+run (pass rate, quoted claims, p50/p95 latency, cost per analysis, largest counterfactual gap). CI also
+fails if that page is out of date with its history.
+
+### Fairness audit
+
+Five pairs of counterfactual cases test the obvious, but not with enough samples to say anything
+statistical. [`eval/fairness_audit.py`](apps/ml-service/eval/fairness_audit.py) does: four base
+resume/JD pairs (strong to weak fit) are rewritten **132 ways**, changing one attribute at a time
+while everything else stays fixed. That means 24 names spanning six perceived ethnicities and both
+genders, four graduation years, and five reasons for a career break. Each variant is run several
+times through the production path.
+
+- Scores are **centred within each base pair**, so a strong pair is never compared with a weak one.
+- A **permutation test** shuffles attribute labels within each pair to get a p-value without
+  distributional assumptions; four tests (ethnicity, gender, age, career break) use a Bonferroni-corrected
+  threshold of 0.0125, and **bootstrap 95% intervals** show how large a difference the data can rule out.
+  Differences under 3 points are reported but not treated as material.
+- A second check flags any assessment that **mentions** the attribute it must ignore (a name, an age, the
+  reason for a break) in its verdict, gaps or questions.
+- Tests plant a 5-point penalty in synthetic data to prove the test catches it, and confirm that large
+  differences between base pairs do not cause false alarms.
+
+It runs from a one-click workflow (264 analyses, about $0.30) and publishes [FAIRNESS.md](FAIRNESS.md).
+
 ### Testing the tests
 
 Real runs found three bugs, all in the tooling rather than the model:
@@ -244,19 +325,29 @@ The lesson: an evaluation harness needs its own tests and a skeptical reading of
 
 ### Other verification
 
-- 32 API tests (including an isolated Redis/BullMQ worker, PDF report authorization, and a real
-  Chromium render), 117 Python tests, and 9 Playwright scenarios run on both desktop and mobile
-  Chromium (18 runs), covering PDF upload, batches, streaming drafts and both report downloads.
-  All run in CI on every push.
+- 38 API tests (including an isolated Redis/BullMQ worker, PDF report authorization, a real Chromium
+  render, and a trace followed from submission through the queue to the ML request), 154 Python tests
+  (citation matching, retries and streaming, token accounting and span privacy, the evaluation summary
+  and the fairness statistics), and 10 Playwright scenarios run on both desktop and mobile Chromium
+  (20 runs), covering PDF upload, batches, streaming drafts, quote highlighting and both report
+  downloads. All run in CI on every push.
 - Contract tests keep the TypeScript and Python schemas and input limits identical.
 
 ## Limitations and what's next
 
+- **The fairness audit's first published run is pending** (it needs the provider key in CI; one
+  click). Its documents are synthetic and its names approximate perceived identity, as in resume audit
+  studies.
+- **Quote checking proves a quote exists, not that it supports the claim.** A model could quote a real
+  sentence beside an overstated strength. The quotes make that easy for a reviewer to spot; an
+  entailment check would be the next step.
 - **Small, synthetic evaluation set.** 24 hand-written cases cover the failure modes I could think of,
   not the distribution of real resumes. Next: a larger, anonymised set with reviewer ratings.
 - **Score variance on borderline candidates** (above). Next: show a score band, or take the median of
   three calls.
 - **English only**, and skill extraction is keyword-based before retrieval.
+- **The self-hosted fine-tuned model predates the citation schema** and would need retraining on it; the
+  hosted model is the production path.
 - **Text-based PDFs only.** Scanned resumes need OCR first; HireLens says so instead of guessing.
 - **PDF reports cover up to 10 candidates;** larger batches download as a text report.
 - **Single small VM.** The worker processes one analysis at a time; fine for a demo, not for a team.
@@ -266,7 +357,7 @@ The lesson: an evaluation harness needs its own tests and a skeptical reading of
 
 React 19 + Vite · pdf.js · Fastify · Puppeteer + Chromium · BullMQ + Redis · PostgreSQL 16 + pgvector · Prisma · Python 3.12 + FastAPI ·
 sentence-transformers · OpenAI GPT-6 Luna (Anthropic and Gemini supported) · Docker Compose · Caddy ·
-Oracle Cloud Always Free · Netlify · GitHub Actions · Playwright · pytest
+OpenTelemetry + Jaeger · Oracle Cloud Always Free · Netlify · GitHub Actions · Playwright · pytest
 
 ---
 
@@ -342,7 +433,8 @@ runtime. It does not replace building and testing the production GGUF image.
 - Two analyses may be admitted at once across API replicas. The worker runs one at a time.
 - Transient inference failures get one retry after five seconds; invalid results fail terminally.
 - Polling tolerates temporary errors for ten minutes and can resume using **Check existing analysis**.
-- PostgreSQL stores anonymous completion records, never candidate documents or assessments.
+- PostgreSQL stores anonymous per-analysis metrics (status, timings, model, tokens, cost, citation
+  counts), never candidate documents or assessments.
 - **Download report** produces a designed PDF (one candidate, or a batch with an overview page),
   rendered by the API with Puppeteer and the image's Chromium from the stored results. The browser
   sends only each analysis's capability and display labels; the PDF is streamed and never stored.
@@ -356,15 +448,27 @@ runtime. It does not replace building and testing the production GGUF image.
   Changing the context size requires retraining and re-evaluating the model. Hosted models have far
   larger context windows, so these caps are conservative for them.
 
+### Metrics, traces and evaluation
+
+```sh
+npm run metrics --workspace apps/api -- --days 7      # p50/p95/p99 latency, cost per analysis, error rate
+# In production (on the VM): docker exec "$(docker ps -qf name=-api-)" node dist/metrics-report.js
+ssh -L 16686:127.0.0.1:16686 ubuntu@<vm>               # then open http://localhost:16686 for Jaeger
+
+npm run ml -- -m eval.run_eval --direct --cases ci     # the pull-request gate, locally
+npm run ml -- -m eval.run_eval --direct --repeat 2 --record && npm run ml -- -m eval.dashboard
+npm run ml -- -m eval.fairness_audit --repeat 2 --workers 6
+```
+
+The evaluation and the fairness audit call the real provider (set `MODEL_BACKEND=hosted` and the key
+in `.env`); with the stub backend they only exercise the plumbing. In GitHub, add the
+`OPENAI_API_KEY` repository secret to enable the Evaluation and Fairness audit workflows.
+
 ### Deployment and training
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for a step-by-step production layout; [OPERATIONS.md](OPERATIONS.md) for readiness, monitoring, rollback, and rollout validation;
 [SECURITY.md](SECURITY.md) for privacy and legacy migration;
-[training instructions](apps/ml-service/training/README.md) and the [Colab notebook](apps/ml-service/training/hirelens_training.ipynb) for reproducible model artifacts;
-and [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for verification and remaining release gates.
-
-The historical [repository audit](REPOSITORY_AUDIT.md) contains findings from an earlier working
-state. It is not the current unresolved-task list.
+and the [training instructions](apps/ml-service/training/README.md) and [Colab notebook](apps/ml-service/training/hirelens_training.ipynb) for reproducible model artifacts.
 
 ### React frontend
 

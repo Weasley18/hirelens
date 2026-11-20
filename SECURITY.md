@@ -1,12 +1,14 @@
 # Security implementation and rollout
 
-The security findings from REPOSITORY_AUDIT.md have been addressed in code. These changes must be deployed together; they change the API/ML response contract, queue name, configuration, and database schema.
+The security findings from an earlier repository audit have been addressed in code. These changes must be deployed together; they change the API/ML response contract, queue name, configuration, and database schema.
 
 ## Access and data lifecycle
 
 This remains an anonymous demo, not a multi-user account system. Each POST /analyze returns a random UUID and a separate 256-bit accessToken. GET and DELETE /analyze/:id require `Authorization: Bearer <accessToken>`. IDs alone grant no access. Tokens are stored only as SHA-256 hashes on the server and kept only in browser memory. Anyone deliberately given the token has access until deletion/expiry. Reloading the page loses it; automatic expiry still applies.
 
-Raw inputs are held in dedicated Redis keys for at most 15 minutes, and removed when processing finishes or the user deletes the analysis. Results and authorization expire no later than one hour after submission. Expiry uses Redis TTLs, not BullMQ's lazy job cleanup. Deleting an active job revokes access and removes its data; computation already in progress may finish in memory but cannot recreate the result. Queue records contain no candidate documents, result text, or upstream exception detail. Postgres stores only anonymous completion IDs/timestamps for statistics.
+Raw inputs are held in dedicated Redis keys for at most 15 minutes, and removed when processing finishes or the user deletes the analysis. Results and authorization expire no later than one hour after submission. Expiry uses Redis TTLs, not BullMQ's lazy job cleanup. Deleting an active job revokes access and removes its data; computation already in progress may finish in memory but cannot recreate the result. Queue records contain no candidate documents, result text, or upstream exception detail. Postgres stores only anonymous per-analysis metrics: a random ID, timestamp, status, timings, backend and model name, token counts, cost and citation counts. Usage reported by the ML service is validated, recorded on that row and stripped before the result is saved; it never contains document text.
+
+Tracing (OpenTelemetry, off unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set) follows the same rule. The queue carries at most W3C `traceparent`/`tracestate` headers, validated by format before use. Spans carry ids, timings, token counts, cost and outcomes; errors are recorded by exception type only, never by message, because provider and validation messages could echo text. Tests assert that no document text reaches span attributes. The production Jaeger UI binds to the VM's loopback interface and is reached through an SSH tunnel; traces are held in memory and lost on restart.
 
 Use a private, access-controlled Redis instance. Disable persistence/backups for this ephemeral private-data store, or ensure provider backup retention matches the promised deletion policy; Redis key deletion cannot remove copies in external backups. The included local Compose file binds both databases to loopback and disables Redis snapshots/AOF. Keep Postgres backups containing legacy candidate data on an explicit expiry/deletion schedule too.
 
@@ -43,12 +45,10 @@ The UI labels simulated stub output and missing retrieval context, explains rete
 
 ## Verification
 
-Verified locally: 19 API tests, 68 Python tests, both production builds, and zero vulnerabilities reported by npm audit. That earlier verification covered the former Next.js frontend. It has since been replaced by React/Vite; see IMPLEMENTATION_STATUS.md for migration checks. This is not a full audit of native/Python transitive dependencies.
+Verified locally: 19 API tests, 68 Python tests, both production builds, and zero vulnerabilities reported by npm audit. That earlier verification covered the former Next.js frontend. It has since been replaced by React/Vite; the README's verification section has the current counts. This is not a full audit of native/Python transitive dependencies.
 
 
 API integration tests start an isolated, socket-only Redis, with no production connection. They exercise authorization, deletion during active work, TTL expiry, schema rejection, request caps, origin handling, submission/polling limits, and shared quota behavior. Python tests exercise authentication before parsing, private errors, body limits, chat delimiters, token budgeting, production stub rejection, and concurrent inference admission.
-
-Current verification and rollout status are recorded in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
 Run:
 
