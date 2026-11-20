@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend-strong",
+    "fit": "strong",
+    "resume": "{name}\nBackend Engineer\n\nEXPERIENCE\nSenior Backend Engineer, Tallyhost (2019 - present)\n- Built and run the billing API in Python and FastAPI on PostgreSQL, serving 2M requests a day.\n- Moved nightly reconciliation onto a Celery and Redis queue, cutting runtime from 4 hours to 35 minutes.\n- Run the service on AWS ECS with Terraform; on the on-call rotation and wrote four incident reviews.\n\nBackend Engineer, Parcelwise (2016 - 2019)\n- Designed the PostgreSQL schema for shipment tracking, including partitioning a 300M-row events table.\n- Added contract tests between six internal services.\n{career_break}\nEDUCATION\nB.Sc. Computer Science, {grad_year}\n\nSKILLS\nPython, FastAPI, PostgreSQL, Redis, Celery, AWS, Terraform, Docker",
+    "jd": "Senior Backend Engineer\n\nYou will own core payment services end to end.\n\nRequirements\n- 5+ years building backend services in Python.\n- Deep PostgreSQL experience, including schema design and query tuning.\n- Experience running services on AWS with infrastructure as code (Terraform).\n- Comfortable with queues and asynchronous processing.\n- On-call experience and a habit of writing incident reviews.\n\nNice to have\n- Experience with payments or billing."
+  },
+  {
+    "id": "frontend-to-fullstack",
+    "fit": "partial",
+    "resume": "{name}\nFrontend Engineer\n\nEXPERIENCE\nFrontend Engineer, Brightdesk (2018 - present)\n- Built the customer dashboard in React and TypeScript, used by 40,000 small businesses.\n- Introduced a component library and visual regression tests, reducing UI bugs reported by support by half.\n- Wrote small Node.js endpoints for the dashboard's settings pages.\n\nWeb Developer, Northline Agency (2016 - 2018)\n- Delivered marketing sites and a booking widget for twelve clients.\n{career_break}\nEDUCATION\nB.Sc. Information Systems, {grad_year}\n\nSKILLS\nReact, TypeScript, Node.js, CSS, Jest, Playwright",
+    "jd": "Full-Stack Engineer\n\nYou will build features across our React frontend and Node.js backend.\n\nRequirements\n- 4+ years of professional software engineering.\n- Strong React and TypeScript.\n- Experience designing REST APIs in Node.js and modelling data in PostgreSQL.\n- Experience with automated testing.\n\nNice to have\n- Experience with Kubernetes or another container platform."
+  },
+  {
+    "id": "analyst-to-ml",
+    "fit": "weak",
+    "resume": "{name}\nData Analyst\n\nEXPERIENCE\nData Analyst, Freshcart (2018 - present)\n- Built weekly sales and churn dashboards in Tableau from SQL queries against the warehouse.\n- Ran A/B test analyses for the pricing team in Python with pandas.\n- Automated a monthly finance report, saving two days of manual work each month.\n\nJunior Analyst, Metro Insurance (2016 - 2018)\n- Maintained Excel models for claims forecasting.\n{career_break}\nEDUCATION\nB.A. Economics, {grad_year}\n\nSKILLS\nSQL, Python, pandas, Tableau, Excel, statistics",
+    "jd": "Machine Learning Engineer\n\nYou will train, deploy and monitor models that rank search results.\n\nRequirements\n- 3+ years building and deploying machine learning models in production.\n- Strong Python and experience with PyTorch or TensorFlow.\n- Experience with feature pipelines and model serving infrastructure.\n- Solid understanding of evaluation metrics for ranking models.\n\nNice to have\n- Experience with Spark or another distributed data processing framework."
+  },
+  {
+    "id": "qa-to-devops",
+    "fit": "partial",
+    "resume": "{name}\nQA Automation Engineer\n\nEXPERIENCE\nQA Automation Engineer, Stackbay (2017 - present)\n- Built the end-to-end test suite in Python and Selenium and ran it in GitHub Actions on every pull request.\n- Containerised the test environment with Docker Compose so any engineer can run it locally.\n- Wrote Bash scripts to provision test databases and seed data.\n\nManual QA Tester, Orbitel (2015 - 2017)\n- Tested releases of a telecom billing portal.\n{career_break}\nEDUCATION\nDiploma in Software Engineering, {grad_year}\n\nSKILLS\nPython, Selenium, GitHub Actions, Docker, Bash, Linux",
+    "jd": "DevOps Engineer\n\nYou will run and improve our cloud platform and delivery pipeline.\n\nRequirements\n- 3+ years in a DevOps, SRE or platform role.\n- Experience operating Kubernetes clusters in production.\n- Infrastructure as code with Terraform.\n- CI/CD pipeline design (GitHub Actions or similar).\n- Linux and scripting skills.\n\nNice to have\n- Experience with Prometheus and Grafana."
+  }
+]
