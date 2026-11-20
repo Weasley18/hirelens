@@ -1,7 +1,8 @@
 # HireLens
 
-**Paste a resume and a job description; get evidence-backed strengths, the gaps worth probing, and
-interview questions tailored to both, in about 10 seconds.**
+**Upload resumes and a job description (PDF or pasted text); watch an evidence-backed assessment
+stream in for each candidate: the strengths, the gaps worth probing, and interview questions
+tailored to both. Download it as a designed PDF report.**
 
 **Live demo:** https://thehirelens.netlify.app (use synthetic resumes; documents are deleted within
 15 minutes and results within an hour)
@@ -29,12 +30,19 @@ The goal was a tool that supports a human reviewer without replacing them:
 
 ## What it does
 
-1. The reviewer pastes a resume (up to 8,000 characters) and a job description (up to 6,000).
-2. HireLens extracts the skills involved and retrieves relevant reference material from a curated
-   knowledge base (interviewing craft, competency rubrics, and seven technical domains).
-3. A language model writes a structured assessment: a 0–100 fit score with a one-sentence verdict,
-   up to 8 evidenced strengths, up to 8 gaps with severity, and interview questions that target them.
-4. The result is shown with a clear "needs human review" framing, and disappears within the hour.
+1. **Bring the documents.** Upload one or more resume PDFs and a job description PDF, or paste text
+   (resumes up to 8,000 characters, job descriptions up to 6,000). PDFs are read **in the browser**
+   with pdf.js; only the extracted text is sent, never the file.
+2. **Assess a batch.** Each resume is assessed against the same role, one after another, in its own
+   results tab.
+3. **Ground it.** HireLens extracts the skills involved and retrieves relevant reference material from
+   a curated knowledge base (interviewing craft, competency rubrics, and seven technical domains).
+4. **Watch it arrive.** The model writes a structured assessment: a 0–100 fit score with a one-sentence
+   verdict, up to 8 evidenced strengths, up to 8 gaps with severity, and interview questions that target
+   them. Fields appear as the model writes them, marked as a draft, until the complete answer passes
+   validation.
+5. **Take it with you.** Download one candidate or the whole batch as a designed PDF report, then delete
+   the analysis, or let it expire: documents within 15 minutes, results within the hour.
 
 ## Architecture
 
@@ -43,21 +51,21 @@ flowchart LR
   user([Reviewer's browser]) -->|HTTPS| web[Static site<br/>React + Vite on Netlify]
   user -->|HTTPS, per-analysis token| caddy[Caddy<br/>TLS proxy]
   subgraph vm [One Oracle Cloud Always Free VM, Docker Compose]
-    caddy --> api[API<br/>Fastify]
+    caddy --> api[API<br/>Fastify + Puppeteer PDF reports]
     api -->|queue| redis[(Redis<br/>documents expire in 15 min)]
     worker[Worker<br/>BullMQ] --> redis
-    worker -->|private network| ml[ML service<br/>FastAPI]
+    worker -->|private network,<br/>streamed fields| ml[ML service<br/>FastAPI]
     ml --> pg[(Postgres + pgvector<br/>knowledge base)]
   end
-  ml -->|structured output| llm[OpenAI<br/>GPT-6 Luna]
+  ml -->|streamed structured output| llm[OpenAI<br/>GPT-6 Luna]
 ```
 
 | Component | Role |
 |---|---|
-| **Web** (React, Vite) | Static single-page app with a strict Content Security Policy. Holds the access token in memory only. |
-| **API** (Fastify, TypeScript) | Validates input, rate-limits (5 submissions a minute), stores documents in Redis with a TTL, queues the job. |
-| **Worker** (BullMQ) | Runs one analysis at a time, calls the ML service, validates the result against the shared contract, retries transient failures once. |
-| **ML service** (Python, FastAPI) | Skill extraction, retrieval from pgvector (`bge-small-en-v1.5` embeddings), prompt construction, model call, schema validation. |
+| **Web** (React, Vite) | Static single-page app with a strict Content Security Policy. Extracts PDF text in the browser (pdf.js), runs batches one resume at a time, shows draft fields as they stream in. Holds access tokens in memory only. |
+| **API** (Fastify, TypeScript) | Validates input, rate-limits (5 submissions a minute), stores documents in Redis with a TTL, queues the job, serves draft previews, and renders PDF reports with Puppeteer and Chromium. |
+| **Worker** (BullMQ) | Runs one analysis at a time, reads the ML service's field stream into a short-lived Redis preview, validates the final result against the shared contract, retries transient failures once. |
+| **ML service** (Python, FastAPI) | Skill extraction, retrieval from pgvector (`bge-small-en-v1.5` embeddings), prompt construction, a streamed model call parsed field by field, schema validation. |
 | **Postgres + pgvector** | The knowledge base and anonymous completion counts. Never candidate documents or results. |
 | **Shared contract** | One JSON Schema used by TypeScript (Zod) and Python, with tests that keep both sides identical. |
 
@@ -144,6 +152,38 @@ Running Postgres on the same VM is a deliberate choice: it only holds data that 
 from the repository, so nightly local dumps are enough. The ML service is reachable only on the private
 Docker network; production permits plain HTTP solely for single-label container names like `ml`.
 
+### 6. Streaming drafts without weakening validation
+
+Waiting 10–20 seconds for a blank panel feels broken, so results stream. The provider streams the
+JSON as it is generated; a small incremental parser in the ML service emits each **top-level field
+only once it is complete** (a whole verdict, a whole list of gaps), never half a sentence or half a
+number. The worker stores those fields as a short-lived preview in Redis, and the browser's existing
+polling shows them, labelled "Draft assessment · awaiting final validation".
+
+The safety property is that streaming changes *when* fields appear, not *what is accepted*: drafts
+are validated field by field against the shared schema, and the final result still has to pass the
+same full validation as before. If the final answer fails, the draft is discarded and the analysis
+retries or fails cleanly, so an unvalidated assessment can never become the result.
+
+### 7. PDF reports with headless Chrome, without printing arbitrary content
+
+A designed report (overview table for a batch, then a page per candidate with a score ring, colour-coded
+gap severities and numbered interview questions) is rendered on the API with Puppeteer. Rendering model
+output in a browser engine is a real attack surface, so:
+
+- **Only real, owned analyses are printed.** The browser sends each analysis's access token and a
+  display label, never content; the API loads the stored result and re-validates it. The endpoint cannot
+  be used to turn arbitrary text into a PDF.
+- **Nothing in the page can run or fetch.** Every value is HTML-escaped, JavaScript is disabled, every
+  network request is aborted, and the document carries a `default-src 'none'` CSP. A verdict containing
+  `<script>` and `<img>` tags renders as inert text (there is a test for exactly that).
+- **Bounded cost.** One reused browser, one page at a time, a 20-second limit, 10 requests a minute, and
+  the browser closes after a minute idle to return its memory. PDFs are streamed, never stored.
+- **ARM-ready.** Puppeteer's bundled Chrome has no Linux ARM build, so the image uses Debian's Chromium;
+  `puppeteer-core` drives it. If Chromium is unavailable, the button falls back to a text report.
+
+A warm render takes about 0.2 seconds.
+
 ## Evaluation
 
 Quality claims are only as good as the test behind them, so HireLens has a 24-case evaluation suite
@@ -190,10 +230,16 @@ Real runs found three bugs, all in the tooling rather than the model:
 
 The lesson: an evaluation harness needs its own tests and a skeptical reading of every flag.
 
+The results above were measured before streaming was added. The prompt, schema and final validation
+are unchanged, but the model call now streams, so re-running the suite against the streaming path is
+the next item on the list.
+
 ### Other verification
 
-- 25 API tests (including an isolated Redis/BullMQ worker), 113 Python tests, and 10 Playwright tests
-  on desktop and mobile Chromium, run in CI on every push.
+- 32 API tests (including an isolated Redis/BullMQ worker, PDF report authorization, and a real
+  Chromium render), 117 Python tests, and 9 Playwright scenarios run on both desktop and mobile
+  Chromium (18 runs), covering PDF upload, batches, streaming drafts and both report downloads.
+  All run in CI on every push.
 - Contract tests keep the TypeScript and Python schemas and input limits identical.
 
 ## Limitations and what's next
@@ -203,12 +249,14 @@ The lesson: an evaluation harness needs its own tests and a skeptical reading of
 - **Score variance on borderline candidates** (above). Next: show a score band, or take the median of
   three calls.
 - **English only**, and skill extraction is keyword-based before retrieval.
+- **Text-based PDFs only.** Scanned resumes need OCR first; HireLens says so instead of guessing.
+- **PDF reports cover up to 10 candidates;** larger batches download as a text report.
 - **Single small VM.** The worker processes one analysis at a time; fine for a demo, not for a team.
 - **Not a hiring decision.** HireLens is designed to prepare a human interviewer, and says so in the product.
 
 ## Tech stack
 
-React 19 + Vite · Fastify · BullMQ + Redis · PostgreSQL 16 + pgvector · Prisma · Python 3.12 + FastAPI ·
+React 19 + Vite · pdf.js · Fastify · Puppeteer + Chromium · BullMQ + Redis · PostgreSQL 16 + pgvector · Prisma · Python 3.12 + FastAPI ·
 sentence-transformers · OpenAI GPT-6 Luna (Anthropic and Gemini supported) · Docker Compose · Caddy ·
 Oracle Cloud Always Free · Netlify · GitHub Actions · Playwright · pytest
 
@@ -287,6 +335,10 @@ runtime. It does not replace building and testing the production GGUF image.
 - Transient inference failures get one retry after five seconds; invalid results fail terminally.
 - Polling tolerates temporary errors for ten minutes and can resume using **Check existing analysis**.
 - PostgreSQL stores anonymous completion records, never candidate documents or assessments.
+- **Download report** produces a designed PDF (one candidate, or a batch with an overview page),
+  rendered by the API with Puppeteer and the image's Chromium from the stored results. The browser
+  sends only each analysis's capability and display labels; the PDF is streamed and never stored.
+  Without Chromium (`CHROMIUM_PATH` unset, e.g. the 1 GB VM layout) the button falls back to a text report.
 - The `KnowledgeChunk` table is exclusively the bundled knowledge corpus. Each ingestion atomically
   replaces its full snapshot, including deleted/renamed sections; do not store unrelated data there.
 - Resumes are capped at 8,000 characters and job descriptions at 6,000, sized to fit the model's
