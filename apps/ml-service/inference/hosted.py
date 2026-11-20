@@ -36,6 +36,7 @@ from jsonschema import Draft7Validator
 
 from common import extract_json, load_schema, validate_analysis
 from inference.citations import removed_upstream, verify
+from inference.telemetry import Call, anthropic_usage, gemini_usage, openai_usage, record_call, span
 from inference.progress import FieldReader, publish_field
 from inference.prompt import HOSTED_GUIDANCE, SYSTEM_PROMPT, build_user_turn
 
@@ -168,12 +169,36 @@ def system_prompt(include_schema: bool) -> str:
     return "\n\n".join(parts)
 
 
+_USAGE_READERS = {
+    "openai": lambda payload: openai_usage(payload.get("usage")),
+    "anthropic": lambda payload: anthropic_usage(payload.get("usage")),
+    "gemini": lambda payload: gemini_usage(payload.get("usageMetadata")),
+}
+
+
 def _post(url: str, body: dict, headers: dict[str, str]) -> dict:
+    """One provider call, recorded with its tokens, time and outcome (never its content)."""
+    usage: dict[str, int] = {}
+    outcome = "ok"
+    started = time.monotonic()
+    with span("provider.call", **{"gen_ai.system": provider(), "gen_ai.request.model": model_name()}):
+        try:
+            return _send(url, body, headers, usage)
+        except HostedModelError as exc:
+            outcome = str(exc)
+            raise
+        finally:
+            record_call(Call(provider(), model_name(), time.monotonic() - started, outcome, **usage))
+
+
+def _send(url: str, body: dict, headers: dict[str, str], usage: dict[str, int]) -> dict:
     if publish_field.get():
         if provider() == "gemini":
             url = url.replace(":generateContent", ":streamGenerateContent?alt=sse")
         else:
             body["stream"] = True
+            if provider() == "openai":
+                body["stream_options"] = {"include_usage": True}  # token counts arrive in a last chunk
     request = urllib.request.Request(
         url, data=json.dumps(body).encode(), method="POST",
         headers={"Content-Type": "application/json", **headers},
@@ -182,8 +207,11 @@ def _post(url: str, body: dict, headers: dict[str, str]) -> dict:
     try:
         with urllib.request.urlopen(request, timeout=max(remaining, 1.0)) as response:
             if publish_field.get():
-                return _stream_answer(response)
-            return json.loads(response.read().decode())
+                return _stream_answer(response, usage)
+            payload = json.loads(response.read().decode())
+            if isinstance(payload, dict):
+                usage.update(_USAGE_READERS[provider()](payload))
+            return payload
     except urllib.error.HTTPError as exc:
         # The body is deliberately dropped: some providers echo parts of the request in errors.
         raise HostedModelError(f"HTTP {exc.code}") from None
@@ -195,7 +223,7 @@ def _post(url: str, body: dict, headers: dict[str, str]) -> dict:
         raise HostedModelError("unreadable response") from None
 
 
-def _stream_answer(response):
+def _stream_answer(response, usage: dict[str, int]):
     reader = FieldReader()
     parts = []
     size = 0
@@ -212,6 +240,8 @@ def _stream_answer(response):
         if "error" in event:
             raise HostedModelError("provider stream failed")
         if provider() == "openai":
+            if event.get("usage"):
+                usage.update(openai_usage(event["usage"]))
             choices = event.get("choices", [])
             if not choices:
                 continue
@@ -221,10 +251,16 @@ def _stream_answer(response):
             chunk = choice.get("delta", {}).get("content") or ""
             finished = choice.get("finish_reason") == "stop"
         elif provider() == "anthropic":
+            if event.get("type") == "message_start":
+                usage.update(anthropic_usage(event.get("message", {}).get("usage")))
+            elif event.get("type") == "message_delta" and event.get("usage"):
+                usage["output_tokens"] = int(event["usage"].get("output_tokens") or 0)
             chunk = event.get("delta", {}).get("partial_json", "")
             if event.get("type") == "message_stop":
                 finished = True
         else:
+            if event.get("usageMetadata"):
+                usage.update(gemini_usage(event["usageMetadata"]))  # cumulative: the last one wins
             candidate = (event.get("candidates") or [{}])[0]
             chunk = "".join(p.get("text", "") for p in candidate.get("content", {}).get("parts", []) if not p.get("thought"))
             finished = candidate.get("finishReason") == "STOP"

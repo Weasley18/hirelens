@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from queue import SimpleQueue
+from contextvars import copy_context
 from threading import Lock, Thread
 
 from dotenv import load_dotenv
@@ -26,6 +28,7 @@ from inference.llm import BACKEND, PRODUCTION_BACKENDS, generate_analysis, Conte
 from inference.progress import publish_field
 from inference.skills import extract_skills, jd_only_skills
 from inference.security import ServiceBoundary, service_token
+from inference.telemetry import collect, setup_tracing, span
 
 log = logging.getLogger("hirelens")
 _inference_lock = Lock()
@@ -33,6 +36,7 @@ _inference_lock = Lock()
 @asynccontextmanager
 async def lifespan(app):
     service_token()
+    setup_tracing()
     if os.environ.get("APP_ENV") == "production" and BACKEND not in PRODUCTION_BACKENDS:
         raise RuntimeError("Production requires the hosted or gguf backend")
     _check_backend()  # Fail startup if the model cannot be used.
@@ -94,34 +98,46 @@ def analyze_documents(resume: str, jd: str) -> dict:
     """Retrieval, generation and validation: everything /infer does after authentication.
 
     eval.run_eval --direct calls this in-process, so the evaluation exercises the same path.
+    Returns the envelope plus "telemetry" (tokens, cost, stage timings), which the worker
+    stores and strips before the result is saved.
     """
-    gaps = jd_only_skills(resume, jd, limit=3)
-    skills = list(dict.fromkeys(gaps + extract_skills(resume, jd, limit=6)))
-    chunks = []
-    try:
-        from rag.retrieve import retrieve_for_skills
-        chunks = retrieve_for_skills(skills)
-    except Exception:
-        log.warning("Retrieval unavailable")
-    upstream = removed_upstream.set(0)
-    try:
-        analysis = generate_analysis(resume, jd, chunks)
-        removed_before = removed_upstream.get()
-    finally:
-        removed_upstream.reset(upstream)
-    if validate_analysis(analysis):
-        raise InvalidModelOutput()
-    # Every backend is held to the same rule: only claims whose quotes occur in the documents.
-    supported, report = verify(analysis, resume, jd)
-    if validate_analysis(supported):
-        raise InvalidModelOutput()  # no supported strength left
-    citations = {"checked": report.checked + removed_before, "removed": len(report.removed) + removed_before}
-    return {"result": supported, "metadata": {"backend": BACKEND, "grounded": bool(chunks), "citations": citations}}
+    started = time.monotonic()
+    with collect() as usage:
+        with span("retrieve"):
+            gaps = jd_only_skills(resume, jd, limit=3)
+            skills = list(dict.fromkeys(gaps + extract_skills(resume, jd, limit=6)))
+            chunks = []
+            try:
+                from rag.retrieve import retrieve_for_skills
+                chunks = retrieve_for_skills(skills)
+            except Exception:
+                log.warning("Retrieval unavailable")
+        upstream = removed_upstream.set(0)
+        try:
+            with span("generate", **{"hirelens.backend": BACKEND}):
+                analysis = generate_analysis(resume, jd, chunks)
+            removed_before = removed_upstream.get()
+        finally:
+            removed_upstream.reset(upstream)
+        if validate_analysis(analysis):
+            raise InvalidModelOutput()
+        # Every backend is held to the same rule: only claims whose quotes occur in the documents.
+        with span("verify"):
+            supported, report = verify(analysis, resume, jd)
+        if validate_analysis(supported):
+            raise InvalidModelOutput()  # no supported strength left
+        citations = {"checked": report.checked + removed_before, "removed": len(report.removed) + removed_before}
+        telemetry = usage.summary()
+    telemetry["model"] = telemetry["model"] or BACKEND
+    telemetry["totalMs"] = round((time.monotonic() - started) * 1000)
+    return {"result": supported, "metadata": {"backend": BACKEND, "grounded": bool(chunks), "citations": citations},
+            "telemetry": telemetry}
 
 
-def _infer(req):
+def _infer(req, headers=None):
     try:
-        return analyze_documents(req.resume, req.jd)
+        with span("ml.infer", headers=headers or {}):
+            return analyze_documents(req.resume, req.jd)
     except ContextLimitError:
         raise HTTPException(422, "Documents exceed the model context budget") from None
     except InvalidModelOutput:
@@ -132,7 +148,7 @@ def _infer(req):
         raise HTTPException(502, "Inference failed") from None
 
 
-def _stream_inference(req):
+def _stream_inference(req, headers):
     events = SimpleQueue()
 
     def field(key, value):
@@ -145,7 +161,7 @@ def _stream_inference(req):
     def produce():
         token = publish_field.set(field)
         try:
-            events.put({"done": _infer(req)})
+            events.put({"done": _infer(req, headers)})
         except HTTPException as exc:
             events.put({"error": exc.status_code})
         finally:
@@ -157,7 +173,8 @@ def _stream_inference(req):
         while (event := events.get()) is not None:
             yield json.dumps(event, ensure_ascii=False) + "\n"
 
-    Thread(target=produce, daemon=True).start()
+    # The worker thread keeps this request's context (the trace, the usage collector).
+    Thread(target=copy_context().run, args=(produce,), daemon=True).start()
     return StreamingResponse(lines(), media_type="application/x-ndjson")
 
 
@@ -167,9 +184,10 @@ def infer(req: AnalyzeRequest, request: Request):
         raise HTTPException(503, "Service unavailable")
     if not _inference_lock.acquire(blocking=False):
         raise HTTPException(429, "Inference busy", headers={"Retry-After": "5"})
+    trace = {k: v for k, v in request.headers.items() if k in ("traceparent", "tracestate")}
     if request.headers.get("accept") == "application/x-ndjson":
-        return _stream_inference(req)
+        return _stream_inference(req, trace)
     try:
-        return _infer(req)
+        return _infer(req, trace)
     finally:
         _inference_lock.release()

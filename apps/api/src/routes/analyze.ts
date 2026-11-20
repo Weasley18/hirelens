@@ -4,6 +4,7 @@ import type { Queue } from "bullmq";
 import { AnalyzeRequestSchema, AnalysisResultSchema } from "@hirelens/shared";
 import { newToken, RETENTION_SECONDS, type PrivateStore } from "../privacy.js";
 import { mapJobState } from "../result.js";
+import { inSpan, traceHeaders } from "../tracing.js";
 
 export interface AnalysisDependencies {
   queue: Pick<Queue, "add" | "getJob" | "getJobCounts">;
@@ -21,9 +22,14 @@ export async function analyzeRoutes(app: FastifyInstance, { queue, store }: Anal
     }
     const accessToken = newToken();
     try {
-      await store.create(jobId, accessToken, parsed.data);
-      // Queue data, return values, and failed reasons never contain candidate documents.
-      await queue.add("analyze", {}, { jobId, attempts: 2, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true, removeOnFail: { age: 3600, count: 200 } });
+      await inSpan("analysis.submit", { "hirelens.job.id": jobId }, async () => {
+        await store.create(jobId, accessToken, parsed.data);
+        // Queue data, return values, and failed reasons never contain candidate documents: at most
+        // the W3C trace headers, so the worker's spans join this trace.
+        const trace = traceHeaders();
+        await queue.add("analyze", Object.keys(trace).length ? { trace } : {}, { jobId, attempts: 2,
+          backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true, removeOnFail: { age: 3600, count: 200 } });
+      });
     } catch {
       await store.remove(jobId);
       await store.release(jobId);

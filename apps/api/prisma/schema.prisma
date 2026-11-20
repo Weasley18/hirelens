@@ -7,9 +7,22 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// One anonymous row per finished analysis: no documents, results, or anything derived from them.
+// The metric columns feed /stats and `npm run metrics` (latency percentiles, cost per analysis).
 model Analysis {
-  id         String   @id @default(uuid())
-  createdAt  DateTime @default(now())
+  id               String   @id @default(uuid())
+  createdAt        DateTime @default(now())
+  status           String   @default("complete") // complete | failed | rejected
+  durationMs       Int?
+  queueWaitMs      Int?
+  backend          String?
+  model            String?
+  attempts         Int?
+  inputTokens      Int?
+  outputTokens     Int?
+  costUsd          Float?
+  citationsChecked Int?
+  citationsRemoved Int?
 
   @@index([createdAt])
 }

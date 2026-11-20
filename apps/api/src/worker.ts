@@ -8,12 +8,20 @@ import { prisma } from "./db.js";
 import { connection, analysisQueue, ANALYSIS_QUEUE } from "./queue.js";
 import { PrivateStore } from "./privacy.js";
 import { createProcessor, TransientInferenceError, InvalidDocumentsError } from "./processor.js";
+import { inSpan, startTracing, stopTracing, traceHeaders } from "./tracing.js";
+import type { AnalysisMetrics } from "./metrics.js";
+
+await startTracing("hirelens-worker");
 
 const lambda = new LambdaClient({ maxAttempts: 1 });
 const store = new PrivateStore(connection);
 const workerConnection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
 workerConnection.on("error", () => console.error("Worker Redis unavailable"));
 async function infer(input: AnalyzeRequest, id: string): Promise<unknown> {
+  const transport = env.ML_LAMBDA_FUNCTION ? "lambda" : "http";
+  return inSpan("ml.request", { "hirelens.transport": transport }, () => callModel(input, id));
+}
+async function callModel(input: AnalyzeRequest, id: string): Promise<unknown> {
     let raw: string;
     if (env.ML_LAMBDA_FUNCTION) {
       // Private IAM invocation avoids both a public model endpoint and gateway timeouts.
@@ -21,7 +29,7 @@ async function infer(input: AnalyzeRequest, id: string): Promise<unknown> {
         host: env.API_DOMAIN, jobId: id, token: await store.beginPreview(id),
       } : undefined;
       const event = { hirelensProgress: progress, version: "2.0", routeKey: "POST /infer", rawPath: "/infer", rawQueryString: "",
-        headers: { "content-type": "application/json", authorization: `Bearer ${env.ML_SERVICE_TOKEN}` },
+        headers: { "content-type": "application/json", authorization: `Bearer ${env.ML_SERVICE_TOKEN}`, ...traceHeaders() },
         requestContext: { http: { method: "POST", path: "/infer", sourceIp: "127.0.0.1", protocol: "HTTP/1.1" } },
         body: JSON.stringify(input), isBase64Encoded: false };
       const response = await lambda.send(new InvokeCommand({ FunctionName: env.ML_LAMBDA_FUNCTION,
@@ -35,7 +43,8 @@ async function infer(input: AnalyzeRequest, id: string): Promise<unknown> {
       raw = payload.body;
     } else {
       const response = await fetch(`${env.ML_SERVICE_URL}/infer`, {
-        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson", Authorization: `Bearer ${env.ML_SERVICE_TOKEN}` },
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson",
+          Authorization: `Bearer ${env.ML_SERVICE_TOKEN}`, ...traceHeaders() },
         body: JSON.stringify(input), signal: AbortSignal.timeout(env.INFERENCE_TIMEOUT_SECONDS * 1000), redirect: "error",
       }).catch(() => { throw new TransientInferenceError(); });
       if ([429, 500, 503, 504].includes(response.status)) throw new TransientInferenceError();
@@ -46,7 +55,9 @@ async function infer(input: AnalyzeRequest, id: string): Promise<unknown> {
     return JSON.parse(raw);
 }
 const worker = new Worker(ANALYSIS_QUEUE, createProcessor({ store, infer,
-  recordCompletion: id => prisma.analysis.upsert({ where: { id }, create: { id }, update: {} }),
+  recordCompletion: (id, metrics?: AnalysisMetrics) =>
+    prisma.analysis.upsert({ where: { id }, create: { id, ...metrics }, update: metrics ?? {} }),
+  recordFailure: (id, metrics) => prisma.analysis.upsert({ where: { id }, create: { id, ...metrics }, update: {} }),
   production: env.NODE_ENV === "production",
 }), { connection: workerConnection, concurrency: 1 });
 const heartbeat = async () => {
@@ -64,5 +75,5 @@ heartbeatTimer.unref();
 worker.on("error", () => console.error("Worker unavailable"));
 worker.on("failed", () => console.error("Analysis failed"));
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, async () => {
-  clearInterval(heartbeatTimer); await worker.close(); workerConnection.disconnect(); await analysisQueue.close(); connection.disconnect(); await prisma.$disconnect();
+  clearInterval(heartbeatTimer); await worker.close(); await stopTracing(); workerConnection.disconnect(); await analysisQueue.close(); connection.disconnect(); await prisma.$disconnect();
 });

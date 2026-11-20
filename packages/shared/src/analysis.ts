@@ -76,3 +76,21 @@ export type AnalysisEnvelope = z.infer<typeof AnalysisEnvelopeSchema>;
 /** Backends allowed to serve real users. "stub" is a keyword-matching test double. */
 export const PRODUCTION_BACKENDS: readonly string[] = ["gguf", "hosted"];
 
+/**
+ * Usage the inference service reports beside the envelope (never inside it, never stored with
+ * the result): tokens, cost and stage timings, with no document content. The worker records it
+ * on the anonymous Analysis row; anything malformed is ignored rather than failing the analysis.
+ */
+const count = z.number().int().min(0).max(10_000_000);
+export const InferenceTelemetrySchema = z.object({
+  model: z.string().max(80).nullable(),
+  attempts: count,
+  inputTokens: count,
+  outputTokens: count,
+  reasoningTokens: count.optional(),
+  cachedTokens: count.optional(),
+  costUsd: z.number().min(0).max(100).nullable(),
+  stages: z.record(z.string().max(40), count).optional(),
+  totalMs: count.optional(),
+});
+export type InferenceTelemetry = z.infer<typeof InferenceTelemetrySchema>;
