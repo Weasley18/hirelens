@@ -80,3 +80,22 @@ export async function runAnalysis(resume, jd, onStatus, onSubmitted, signal, ret
     if (signal?.aborted) throw new AnalysisError("Analysis cancelled.");
     return pollAnalysis(handle, onStatus, signal);
 }
+/**
+ * Ask the API to render a PDF of finished analyses. Each item carries its own analysis capability;
+ * the server renders the stored results, so only analyses this browser owns can be printed.
+ * Resolves to a PDF Blob, or throws so the caller can fall back to a text report.
+ */
+export async function fetchReportPdf(items, title) {
+    const clamp = (value) => String(value ?? "").trim().slice(0, 120);
+    const response = await fetch(`${API_URL}/reports`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        signal: AbortSignal.timeout(45_000),
+        body: JSON.stringify({
+            ...(clamp(title) ? { title: clamp(title) } : {}),
+            items: items.map(({ handle, label }) => ({ jobId: handle.jobId, accessToken: handle.accessToken, label: clamp(label) || "Resume" })),
+        }),
+    });
+    if (!response.ok || response.headers.get("content-type") !== "application/pdf")
+        throw new AnalysisError("PDF report unavailable.");
+    return response.blob();
+}

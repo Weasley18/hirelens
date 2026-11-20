@@ -11,6 +11,9 @@ x-app: &app
     NODE_ENV: production
     REDIS_URL: redis://redis:6379
     NODE_OPTIONS: --max-old-space-size=160
+    # Chromium does not fit in a 256 MB container: PDF reports are off and the web app falls back
+    # to a text report.
+    CHROMIUM_PATH: ""
   restart: unless-stopped
   depends_on: [redis]
   read_only: true

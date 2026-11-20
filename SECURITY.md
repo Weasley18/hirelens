@@ -64,3 +64,14 @@ AWS deployment, the destructive migration, legacy-data purge, and real GGUF exec
 
 The React build emits `_headers` for static hosts and a CSP meta tag in HTML. Configure the full
 HTTP headers on hosts that do not process `_headers`; framing protection requires HTTP headers.
+
+## PDF reports
+
+`POST /reports` renders finished analyses with headless Chromium (Puppeteer). Each item must carry
+that analysis's access token, and the content comes from the stored, re-validated result, so the
+endpoint cannot print arbitrary text. Labels are length-limited and every value is HTML-escaped.
+The page runs with JavaScript disabled, all network requests aborted and a `default-src 'none'`
+CSP; one page renders at a time with a 20-second limit, and the endpoint allows 10 requests a minute.
+Chromium runs with `--no-sandbox` because the hardened, read-only, unprivileged container cannot
+provide its sandbox; the measures above are what keep untrusted model output inert. PDFs are
+streamed with `Cache-Control: no-store` and never written to disk.

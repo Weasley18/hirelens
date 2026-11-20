@@ -20,6 +20,10 @@ x-app: &app
     NODE_ENV: production
     REDIS_URL: redis://redis:6379
     ML_SERVICE_URL: http://ml:8000
+    # The root filesystem is read-only; Chromium (PDF reports) keeps its profile and caches in /tmp.
+    HOME: /tmp
+    XDG_CONFIG_HOME: /tmp
+    XDG_CACHE_HOME: /tmp
   restart: unless-stopped
   depends_on: [redis]
   read_only: true

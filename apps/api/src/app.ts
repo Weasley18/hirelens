@@ -3,8 +3,10 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import type IORedis from "ioredis";
 import { analyzeRoutes, type AnalysisDependencies } from "./routes/analyze.js";
+import { reportRoutes } from "./routes/reports.js";
+import type { RenderPdf } from "./report/pdf.js";
 
-export async function buildApp(deps: AnalysisDependencies, options: { origins: string[]; redis?: IORedis; trustProxy?: string[]; production?: boolean; readiness?: () => Promise<void> }) {
+export async function buildApp(deps: AnalysisDependencies & { renderPdf?: RenderPdf }, options: { origins: string[]; redis?: IORedis; trustProxy?: string[]; production?: boolean; readiness?: () => Promise<void> }) {
   const app = Fastify({
     logger: { redact: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"] },
     logController: new LogController({ disableRequestLogging: true }), bodyLimit: 100_000,
@@ -41,5 +43,6 @@ export async function buildApp(deps: AnalysisDependencies, options: { origins: s
     } catch { return reply.code(503).send({ status: "unavailable" }); }
   });
   await app.register(analyzeRoutes, deps);
+  await app.register(reportRoutes, { store: deps.store, renderPdf: deps.renderPdf });
   return app;
 }
