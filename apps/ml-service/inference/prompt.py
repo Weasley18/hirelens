@@ -36,9 +36,13 @@ Fields:
   A resume saying it lacks a skill counts as not evidenced. severity is "severe" for a core
   requirement that is absent, "moderate" for one that is partial or an important secondary skill,
   "minor" for a nice-to-have. skill is a short name (max 60 characters); note (10-240 characters)
-  says what the job needs and what the resume shows.
-- strengths (1-8): concrete, job-relevant strengths taken from the resume, each at most
-  120 characters. Mention the specific evidence (project, metric, technology).
+  says what the job needs and what the resume shows. requirement is the job description's own
+  words stating that requirement: copy 4-25 consecutive words exactly as written.
+- strengths (1-8): concrete, job-relevant strengths from the resume. text states the strength
+  in at most 120 characters; evidence is the resume's own words that support it: copy 4-25
+  consecutive words exactly as written.
+  Quotes are checked against the documents. Never paraphrase, translate, fix typos or join text
+  from different places inside a quote; a claim whose quote cannot be found is discarded.
 - interviewQuestions (3-5 preferred, 2-8 allowed): questions that probe the gaps and verify the
   strongest claims. Use the reference material where it is relevant. question is 15-400
   characters; targets names the skill or claim being tested (2-80 characters); difficulty is

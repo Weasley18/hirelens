@@ -1,0 +1,4 @@
+{
+  "resume": "Backend engineer, five years. At Ledgerly I designed the PostgreSQL schema for the billing service, including partitioning on a 40M-row table by month. Built REST APIs with Fastify and Node.js, and moved invoice generation to background jobs with Redis and BullMQ. Cut p95 latency from 800ms to 120ms by adding covering indexes and caching. Services run in Docker Compose on a single VM; infrastructure is configured by hand in the cloud console.",
+  "jd": "Senior backend engineer for our payments platform. You will design PostgreSQL schemas, build Node.js APIs and run asynchronous workloads. We need 2+ years running services on Kubernetes in production. Infrastructure is managed with Terraform. You will also mentor two junior engineers joining the team this year."
+}

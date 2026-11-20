@@ -13,8 +13,10 @@ from fastapi.testclient import TestClient
 from inference import hosted, llm, server
 
 FIXTURE = json.loads((Path(__file__).resolve().parents[3] / "packages/shared/fixtures/sample-analysis.json").read_text())
-RESUME = "Backend engineer, five years of Python and PostgreSQL services. SECRET-RESUME-MARKER"
-JD = "Hiring a backend engineer with Python, PostgreSQL and Kubernetes experience."
+DOCUMENTS = json.loads((Path(__file__).resolve().parents[3] / "packages/shared/fixtures/sample-documents.json").read_text())
+# The fixture's quotes come from these documents; the marker lets tests prove no document text leaks.
+RESUME = DOCUMENTS["resume"] + " SECRET-RESUME-MARKER"
+JD = DOCUMENTS["jd"]
 TOKEN = "b" * 64
 
 
@@ -238,7 +240,10 @@ def test_retry_only_starts_when_enough_of_the_budget_remains(monkeypatch):
 
 def test_strict_schema_restates_dropped_limits_for_the_model():
     schema = hosted.strict_schema()
-    assert "120 characters" in schema["properties"]["strengths"]["items"]["description"]
+    strength = schema["properties"]["strengths"]["items"]["properties"]
+    assert "120 characters" in strength["text"]["description"]
+    assert "8-240 characters" in strength["evidence"]["description"]
+    assert "word for word from the resume" in strength["evidence"]["description"]
     assert "1-8 items" in schema["properties"]["strengths"]["description"]
     assert "maxLength" not in json.dumps(schema)
 

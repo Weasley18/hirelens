@@ -5,6 +5,7 @@ import re
 
 from mangum import Mangum
 
+from inference.citations import supported_items
 from inference.progress import publish_field
 from inference.server import app
 
@@ -22,6 +23,11 @@ def handler(event, context):
         return _asgi(event, context)
     draft = {}
     enabled = True
+    try:  # drafts are held to the final answer's evidence rule, so they need the documents
+        body = json.loads(event.get("body") or "{}")
+        documents = (str(body["resume"]), str(body["jd"]))
+    except (TypeError, ValueError, KeyError):
+        documents = None
 
     def publish(key, value):
         nonlocal enabled
@@ -29,7 +35,11 @@ def handler(event, context):
             return
         if key is None:
             draft.clear()
-        elif key in ("fitScore", "verdict", "strengths", "gaps", "interviewQuestions"):
+        elif key in ("strengths", "gaps"):
+            if documents is None:
+                return  # cannot verify quotes: show this field only in the final answer
+            draft[key] = supported_items(key, value, *documents)
+        elif key in ("fitScore", "verdict", "interviewQuestions"):
             draft[key] = value
         else:
             return

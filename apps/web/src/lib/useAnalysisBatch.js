@@ -62,7 +62,8 @@ export default function useAnalysisBatch() {
                 } else {
                     const resume = await documentText(row.document, RESUME_MIN, RESUME_MAX);
                     if (signal.aborted) return;
-                    update(i, { status: "Submitting documents" });
+                    // Kept in memory only, so each quote can be shown in its original context.
+                    update(i, { status: "Submitting documents", sources: { resume, jd } });
                     result = await runAnalysis(resume, jd, progress, handle => update(i, { handle }), signal, state.current.length > 1);
                 }
                 if (!signal.aborted) update(i, { result, preview: null, status: "Complete" });
@@ -106,7 +107,7 @@ export default function useAnalysisBatch() {
             for (const [i, row] of state.current.entries()) {
                 if (row.handle) {
                     await deleteAnalysis(row.handle);
-                    update(i, { handle: null, result: null, preview: null, error: "", status: "Deleted" });
+                    update(i, { handle: null, result: null, preview: null, sources: null, error: "", status: "Deleted" });
                 }
             }
             role.current = null;

@@ -14,6 +14,14 @@ export const GapSchema = z.object({
   skill: z.string().min(1).max(60),
   severity: Severity,
   note: z.string().min(10).max(240),
+  /** Excerpt copied from the job description; verified by the ML service. */
+  requirement: z.string().min(8).max(240),
+}).strict();
+
+export const StrengthSchema = z.object({
+  text: z.string().min(2).max(120),
+  /** Excerpt copied from the resume; verified by the ML service. */
+  evidence: z.string().min(8).max(240),
 }).strict();
 
 export const InterviewQuestionSchema = z.object({
@@ -26,11 +34,12 @@ export const AnalysisResultSchema = z.object({
   fitScore: z.number().int().min(0).max(100),
   verdict: z.string().min(10).max(240),
   gaps: z.array(GapSchema).max(8),
-  strengths: z.array(z.string().min(2).max(120)).min(1).max(8),
+  strengths: z.array(StrengthSchema).min(1).max(8),
   interviewQuestions: z.array(InterviewQuestionSchema).min(2).max(8),
 }).strict();
 
 export type Gap = z.infer<typeof GapSchema>;
+export type Strength = z.infer<typeof StrengthSchema>;
 export type InterviewQuestion = z.infer<typeof InterviewQuestionSchema>;
 export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
 
@@ -55,9 +64,15 @@ export type JobStatus = "queued" | "active" | "done" | "failed";
 
 export const AnalysisEnvelopeSchema = z.object({
   result: AnalysisResultSchema,
-  metadata: z.object({ backend: z.enum(["stub", "gguf", "hosted"]), grounded: z.boolean() }).strict(),
+  metadata: z.object({
+    backend: z.enum(["stub", "gguf", "hosted"]),
+    grounded: z.boolean(),
+    /** Claims whose quotes were checked against the documents, and how many were removed as unsupported. */
+    citations: z.object({ checked: z.number().int().min(0), removed: z.number().int().min(0) }).strict(),
+  }).strict(),
 }).strict();
 export type AnalysisEnvelope = z.infer<typeof AnalysisEnvelopeSchema>;
 
 /** Backends allowed to serve real users. "stub" is a keyword-matching test double. */
 export const PRODUCTION_BACKENDS: readonly string[] = ["gguf", "hosted"];
+

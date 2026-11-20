@@ -5,24 +5,39 @@
     {
       "skill": "Kubernetes",
       "severity": "moderate",
-      "note": "JD asks for 2+ years running services on Kubernetes; the resume shows Docker Compose only."
+      "note": "JD asks for 2+ years running services on Kubernetes; the resume shows Docker Compose only.",
+      "requirement": "We need 2+ years running services on Kubernetes in production"
     },
     {
       "skill": "Terraform",
       "severity": "minor",
-      "note": "Infrastructure is described as console-configured, with no infrastructure-as-code mentioned anywhere."
+      "note": "Infrastructure is described as console-configured, with no infrastructure-as-code mentioned anywhere.",
+      "requirement": "Infrastructure is managed with Terraform"
     },
     {
       "skill": "Team leadership",
       "severity": "minor",
-      "note": "JD mentions mentoring two junior engineers; the resume shows individual contribution only."
+      "note": "JD mentions mentoring two junior engineers; the resume shows individual contribution only.",
+      "requirement": "mentor two junior engineers joining the team this year"
     }
   ],
   "strengths": [
-    "PostgreSQL schema design, including partitioning on a 40M-row table",
-    "REST API development with Fastify and Node.js",
-    "Background job processing with Redis and BullMQ",
-    "Measurable performance work: p95 latency cut from 800ms to 120ms"
+    {
+      "text": "PostgreSQL schema design, including partitioning on a 40M-row table",
+      "evidence": "partitioning on a 40M-row table by month"
+    },
+    {
+      "text": "REST API development with Fastify and Node.js",
+      "evidence": "Built REST APIs with Fastify and Node.js"
+    },
+    {
+      "text": "Background job processing with Redis and BullMQ",
+      "evidence": "background jobs with Redis and BullMQ"
+    },
+    {
+      "text": "Measurable performance work: p95 latency cut from 800ms to 120ms",
+      "evidence": "Cut p95 latency from 800ms to 120ms"
+    }
   ],
   "interviewQuestions": [
     {

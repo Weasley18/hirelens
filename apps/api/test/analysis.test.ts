@@ -97,7 +97,7 @@ describe("mapJobState", () => {
 
 test("worker decodes split UTF-8 fields, clears retried drafts and accepts a validated final envelope", async () => {
   const { readInferenceResponse } = await import("../src/inference-response.ts");
-  const result = { result: fixture, metadata: { backend: "hosted", grounded: true } };
+  const result = { result: fixture, metadata: { backend: "hosted", grounded: true, citations: { checked: 7, removed: 0 } } };
   const verdict = "Expérience aligned with the role.";
   const frames = [{ field: "fitScore", value: 500 }, { field: "verdict", value: verdict },
     { reset: true }, { field: "fitScore", value: 74 }, { done: result }];

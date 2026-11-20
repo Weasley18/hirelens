@@ -94,6 +94,17 @@ textarea:disabled { color: #667063; background: #f3f5f0; }
 .strength-list, .gap-list, .question-list { list-style: none; padding: 0; margin: 0; }
 .strength-list li { display: flex; gap: 10px; align-items: baseline; margin: 10px 0; font-size: 12px; color: #c0cdb6; line-height: 1.8; }
 .strength-list li > span { width: 4px; height: 4px; background: #bbd28f; border-radius: 50%; flex-shrink: 0; }
+.strength-list li > div { min-width: 0; }
+.citation { margin-top: 3px; }
+.quote { display: block; width: 100%; text-align: left; background: none; border: 0; border-left: 2px solid #bbd28f66; padding: 1px 0 1px 9px; color: #9fb193; font-size: 10.5px; font-style: italic; line-height: 1.6; cursor: pointer; transition: border-color 160ms ease, color 160ms ease; }
+.quote:hover, .quote[aria-expanded="true"] { border-left-color: #d2f474; color: #d4dfbb; }
+.quote:focus-visible { outline: 2px solid #d2f474; outline-offset: 2px; border-radius: 2px; }
+.quote-source { font-style: normal; font-size: 8.5px; letter-spacing: .08em; text-transform: uppercase; color: #7f9373; margin-right: 6px; }
+.quote-context { margin: 6px 0 2px 11px; padding: 8px 10px; border-radius: 6px; background: #0f1d18; border: 1px solid #91a18122; color: #93a487; font-size: 10.5px; line-height: 1.7; white-space: pre-wrap; }
+.quote-context mark { background: #d2f47433; color: #eef6d4; border-radius: 2px; padding: 0 1px; }
+.quote-missing { font-style: italic; }
+.verification { display: flex; align-items: center; gap: 7px; margin: 8px 0 0; font-size: 10px; color: #b9d37f; }
+.verification svg { width: 12px; height: 12px; }
 .gap-list li { padding: 10px 12px; background: #ffffff04; border: 1px solid #91a18125; border-radius: 7px; margin-top: 9px; }
 .gap-list li > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .gap-list h3 { font-size: 12px; font-weight: 500; margin: 0; }

@@ -35,6 +35,7 @@ from typing import Any
 from jsonschema import Draft7Validator
 
 from common import extract_json, load_schema, validate_analysis
+from inference.citations import removed_upstream, verify
 from inference.progress import FieldReader, publish_field
 from inference.prompt import HOSTED_GUIDANCE, SYSTEM_PROMPT, build_user_turn
 
@@ -58,7 +59,7 @@ TEMPERATURE = 0.2
 MAX_OUTPUT_TOKENS = 2000
 # Reasoning models spend part of max_completion_tokens on hidden reasoning before the answer.
 OPENAI_MAX_COMPLETION_TOKENS = 6000
-ATTEMPTS = 2  # one retry if the answer fails schema validation
+ATTEMPTS = 2  # one retry if the answer fails schema validation or cites text the documents lack
 TOOL_NAME = "record_analysis"
 
 
@@ -346,6 +347,8 @@ def generate(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds()
     token = _deadline.set(deadline)
     reasons: list[str] = []
+    fallback: dict[str, Any] | None = None  # valid once unsupported claims are removed
+    fallback_removed = 0
     try:
         for attempt in range(1, ATTEMPTS + 1):
             if attempt > 1 and deadline - time.monotonic() < MIN_ATTEMPT_SECONDS:
@@ -362,9 +365,19 @@ def generate(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
                     raise HostedModelError(f"{provider()} rejected the request ({reason})") from None
                 reasons.append(f"attempt {attempt}: {reason}")
                 continue
-            if isinstance(analysis, dict) and not validate_analysis(analysis):
+            if not isinstance(analysis, dict) or validate_analysis(analysis):
+                reasons.append(f"attempt {attempt}: invalid {_invalid_fields(analysis)}")
+                continue
+            supported, report = verify(analysis, resume, jd)
+            if not report.removed:
                 return analysis
-            reasons.append(f"attempt {attempt}: invalid {_invalid_fields(analysis)}")
+            reasons.append(f"attempt {attempt}: unsupported quotes in {', '.join(report.removed)}")
+            if not validate_analysis(supported):
+                fallback, fallback_removed = supported, len(report.removed)
     finally:
         _deadline.reset(token)
+    if fallback is not None:
+        # Out of attempts: keep what the documents support, and report what was removed.
+        removed_upstream.set(fallback_removed)
+        return fallback
     raise HostedModelError(f"{provider()} did not return a valid analysis ({'; '.join(reasons)})")

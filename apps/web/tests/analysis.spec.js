@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { test, expect } from "@playwright/test";
 import fixture from "../../../packages/shared/fixtures/sample-analysis.json" with { type: "json" };
 const handle = { jobId: "12345678-1234-4234-8234-123456789abc", accessToken: "a".repeat(64) };
-const result = { status: "done", result: fixture, metadata: { backend: "stub", grounded: false } };
+const result = { status: "done", result: fixture, metadata: { backend: "stub", grounded: false, citations: { checked: 7, removed: 0 } } };
 test("sample assessment, privacy disclosure, keyboard access, and deletion", async ({ page }, testInfo) => {
     let deleted = false;
     await page.route(/\/analyze(?:\/.*)?$/, async (route) => {
@@ -257,4 +257,30 @@ test("clearing during submission deletes the job when its capability arrives", a
     accept();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     expect(deletions).toBe(1);
+});
+
+test("each claim shows its quote, which opens highlighted in the original document", async ({ page }) => {
+    const { SAMPLE_RESUME, SAMPLE_JD } = await import("../src/lib/sample.js");
+    const quoted = { ...fixture,
+        strengths: [{ text: "Queue-backed latency work", evidence: "taking p95 request latency on the affected endpoints from 800ms to 120ms" }],
+        gaps: [{ ...fixture.gaps[0], requirement: "2+ years running services on Kubernetes in production" }] };
+    expect(SAMPLE_RESUME.replace(/\s+/g, " ")).toContain(quoted.strengths[0].evidence);
+    expect(SAMPLE_JD).toContain(quoted.gaps[0].requirement);
+    await page.route(/\/analyze(?:\/.*)?$/, route => route.request().method() === "POST"
+        ? route.fulfill({ status: 202, json: handle })
+        : route.fulfill({ json: { status: "done", result: quoted,
+            metadata: { backend: "hosted", grounded: true, citations: { checked: 5, removed: 1 } } } }));
+    await page.goto("/");
+    await page.getByRole("button", { name: "Use the sample resume" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "claims quote" }))
+        .toHaveText("4 claims quote the documents · 1 unsupported claim removed");
+    const quote = page.getByRole("button", { name: /800ms to 120ms/ });
+    await expect(quote).toHaveAttribute("aria-expanded", "false");
+    await quote.click();
+    const shown = page.getByLabel("Quote in the resume");
+    // The original wraps across a line; the highlight spans it and includes the neighbouring words.
+    await expect(shown.locator("mark")).toHaveText(/^taking p95 request latency on\s+the affected endpoints from 800ms to 120ms$/);
+    await expect(shown).toContainText("BullMQ queue");
+    await page.getByRole("button", { name: /Kubernetes in production/ }).click();
+    await expect(page.getByLabel("Quote in the job description").locator("mark")).toHaveText(quoted.gaps[0].requirement);
 });

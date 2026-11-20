@@ -16,6 +16,8 @@ Set MODEL_BACKEND=hosted (with a provider key) or MODEL_BACKEND=gguf (with hirel
 
 from __future__ import annotations
 
+import re
+
 import os
 from functools import lru_cache
 from typing import Any
@@ -80,6 +82,15 @@ def _generate_gguf(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
 _SEVERITIES = ["severe", "moderate", "minor"]
 
 
+def _excerpt(document: str, term: str | None = None) -> str | None:
+    """A sentence (at most 240 characters) of the document, containing term if given."""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", document):
+        sentence = sentence.strip()
+        if len(sentence) >= 8 and (term is None or term.lower() in sentence.lower()):
+            return sentence[:240].rsplit(" ", 1)[0] if len(sentence) > 240 else sentence
+    return None
+
+
 def _generate_stub(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
     resume_skills = extract_skills(resume, limit=8)
     jd_skills = extract_skills(jd, limit=8)
@@ -94,13 +105,17 @@ def _generate_stub(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
             "skill": skill,
             "severity": _SEVERITIES[min(i, len(_SEVERITIES) - 1)],
             "note": f"The job description asks for {skill}; the resume does not evidence it.",
+            "requirement": requirement,
         }
         for i, skill in enumerate(missing)
+        if (requirement := _excerpt(jd, skill))
     ]
 
     strengths = [
-        f"{skill} experience, evidenced in the resume" for skill in resume_skills[:4]
-    ] or ["Relevant experience described in the resume"]
+        {"text": f"{skill} experience, evidenced in the resume", "evidence": evidence}
+        for skill in resume_skills[:4]
+        if (evidence := _excerpt(resume, skill))
+    ] or [{"text": "Relevant experience described in the resume", "evidence": _excerpt(resume) or resume[:240]}]
 
     questions = [
         {

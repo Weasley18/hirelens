@@ -34,10 +34,10 @@ after(async () => {
   if (dir) await rm(dir, { recursive: true, force: true });
 });
 const input = { resume: "Backend engineer building Python services with SQL and testing. ".repeat(3), jd: "Seeking a Python engineer for backend services and testing. ".repeat(3) };
-const envelope = { result: { fitScore: 50, verdict: "Needs further assessment.", gaps: [], strengths: ["Python"], interviewQuestions: [
+const envelope = { result: { fitScore: 50, verdict: "Needs further assessment.", gaps: [], strengths: [{ text: "Python", evidence: "building Python services with SQL" }], interviewQuestions: [
   { question: "Describe a system you built.", targets: "Python", difficulty: "mid" as const },
   { question: "How do you test your systems?", targets: "Testing", difficulty: "mid" as const },
-] }, metadata: { backend: "stub" as const, grounded: false } };
+] }, metadata: { backend: "stub" as const, grounded: false, citations: { checked: 1, removed: 0 } } };
 async function setup(renderPdf?: (html: string) => Promise<Uint8Array>) {
   await redis.flushdb(); // Only the isolated, socket-only Redis created above.
   const jobs = new Map<string, any>();
@@ -235,7 +235,7 @@ test("production accepts hosted and gguf results but never the stub", async () =
     const id = randomUUID(); await store.reserve(id); await store.create(id, newToken(), input);
     const job = { id, attemptsMade: 0, opts: { attempts: 1 }, timestamp: Date.now() } as any;
     const run = createProcessor({ store, production: true, recordCompletion: async () => {},
-      infer: async () => ({ ...envelope, metadata: { backend, grounded: true } }) });
+      infer: async () => ({ ...envelope, metadata: { backend, grounded: true, citations: { checked: 1, removed: 0 } } }) });
     if (backend === "stub") {
       await assert.rejects(() => run(job), error => error instanceof UnrecoverableError);
       assert.equal(await store.result(id), null);

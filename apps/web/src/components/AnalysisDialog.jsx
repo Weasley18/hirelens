@@ -55,7 +55,7 @@ export default function AnalysisDialog({ batch, roleName, onClose, onClear }) {
                     {result?.metadata.backend === "stub" && <p className="result-notice">Demo mode: this is a simulated keyword-based assessment.</p>}
                     {result && !result.metadata.grounded && <p className="grounding-note">Reference material was unavailable. Review claims against the original documents.</p>}
                     {!result && <p className="grounding-note">Draft assessment · awaiting final validation</p>}
-                    <Assessment result={result?.result ?? row.preview}/>
+                    <Assessment result={result?.result ?? row.preview} citations={result?.metadata.citations} sources={row.sources}/>
                 </div>}
             </section>}
             <footer className="dialog-footer">

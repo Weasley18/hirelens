@@ -8,10 +8,12 @@ function section(row, index) {
         heading,
         metadata.backend === "stub" ? "Demo mode — simulated keyword-based assessment." : "Model-generated assessment.",
         !metadata.grounded && "Reference material was unavailable. Review claims against the original documents.",
+        `Claims checked against the documents: ${metadata.citations.checked - metadata.citations.removed} supported` +
+            (metadata.citations.removed ? `, ${metadata.citations.removed} unsupported removed.` : "."),
         `Role alignment: ${result.fitScore}/100`,
         result.verdict,
-        "Strengths\n" + result.strengths.map(item => "• " + item).join("\n"),
-        "Areas to explore\n" + (result.gaps.map(gap => `• ${gap.skill} (${gap.severity}) — ${gap.note}`).join("\n") || "No gaps reported."),
+        "Strengths\n" + result.strengths.map(item => `• ${item.text}\n  Resume: “${item.evidence}”`).join("\n"),
+        "Areas to explore\n" + (result.gaps.map(gap => `• ${gap.skill} (${gap.severity}) — ${gap.note}\n  Job description: “${gap.requirement}”`).join("\n") || "No gaps reported."),
         "Interview questions\n" + result.interviewQuestions.map((item, i) => `${i + 1}. ${item.question}\n   ${item.targets} · ${item.difficulty}`).join("\n"),
     ].filter(Boolean).join("\n\n");
 }

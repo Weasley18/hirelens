@@ -37,6 +37,12 @@ function ring(fit: number, size = 92) {
   </svg>`;
 }
 
+function verification({ checked, removed }: { checked: number; removed: number }) {
+  const kept = checked - removed;
+  if (!removed) return `✓ All ${kept} ${kept === 1 ? "claim quotes" : "claims quote"} the documents`;
+  return `✓ ${kept} ${kept === 1 ? "claim quotes" : "claims quote"} the documents · ${removed} unsupported ${removed === 1 ? "claim" : "claims"} removed`;
+}
+
 function candidate(item: ReportItem, index: number, total: number) {
   const { result, metadata } = item.envelope;
   const fit = score(result.fitScore), band = BAND(fit);
@@ -45,14 +51,15 @@ function candidate(item: ReportItem, index: number, total: number) {
     !metadata.grounded && "Reference material was unavailable for this assessment. Check claims against the original documents.",
   ].filter(Boolean).map(text => `<p class="notice">${esc(text)}</p>`).join("");
   const strengths = result.strengths.length
-    ? result.strengths.map(s => `<li><span class="tick">✓</span><span>${esc(s)}</span></li>`).join("")
+    ? result.strengths.map(s => `<li><span class="tick">✓</span><div><span>${esc(s.text)}</span>
+        <q class="cite">Resume: “${esc(s.evidence)}”</q></div></li>`).join("")
     : `<li class="empty">No strengths reported.</li>`;
   const gaps = result.gaps.length
     ? result.gaps.map(g => {
       const sev = SEVERITY[g.severity] ?? SEVERITY.minor;
       return `<li class="gap"><div class="gap-head"><strong>${esc(g.skill)}</strong>
         <span class="pill" style="color:${sev.color};background:${sev.bg}">${sev.label}</span></div>
-        <p>${esc(g.note)}</p></li>`;
+        <p>${esc(g.note)}</p><q class="cite">Job description: “${esc(g.requirement)}”</q></li>`;
     }).join("")
     : `<li class="empty">No gaps reported.</li>`;
   const questions = result.interviewQuestions.map((q, i) => `<li class="question">
@@ -66,6 +73,7 @@ function candidate(item: ReportItem, index: number, total: number) {
         <h2>${esc(item.label)}</h2>
         <p class="band" style="color:${band.color}">${band.name}</p>
         <p class="verdict">${esc(result.verdict)}</p>
+        <p class="verified">${verification(metadata.citations)}</p>
       </div>
       <div class="score">${ring(fit)}<p>Role alignment</p></div>
     </div>
@@ -132,6 +140,9 @@ export function renderReportHtml({ title, generatedAt, items }: ReportInput): st
   .panel { padding: 12px 14px; border: 1px solid #e1e6dd; border-radius: 12px; background: #fafbf7; break-inside: avoid; }
   ul, ol { list-style: none; margin: 0; padding: 0; }
   .strengths li { display: flex; gap: 8px; padding: 3px 0; }
+  .cite { display: block; quotes: none; margin-top: 2px; padding-left: 7px; border-left: 2px solid #d2f474;
+    color: #5b6863; font-size: 8pt; font-style: italic; line-height: 1.4; }
+  .verified { margin-top: 6px; font-size: 8pt; font-weight: 600; color: #3f7d1f; }
   .tick { color: #3f7d1f; font-weight: 700; }
   .gap { padding: 5px 0 6px; border-bottom: 1px solid #edf0ea; } .gap:last-child { border-bottom: 0; }
   .gap-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }

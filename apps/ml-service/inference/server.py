@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from common import validate_analysis
+from inference.citations import removed_upstream, supported_items, verify
 from inference.limits import JD_MAX, JD_MIN, RESUME_MAX, RESUME_MIN
 from inference.llm import BACKEND, PRODUCTION_BACKENDS, generate_analysis, ContextLimitError, get_llm
 from inference.progress import publish_field
@@ -102,10 +103,20 @@ def analyze_documents(resume: str, jd: str) -> dict:
         chunks = retrieve_for_skills(skills)
     except Exception:
         log.warning("Retrieval unavailable")
-    analysis = generate_analysis(resume, jd, chunks)
+    upstream = removed_upstream.set(0)
+    try:
+        analysis = generate_analysis(resume, jd, chunks)
+        removed_before = removed_upstream.get()
+    finally:
+        removed_upstream.reset(upstream)
     if validate_analysis(analysis):
         raise InvalidModelOutput()
-    return {"result": analysis, "metadata": {"backend": BACKEND, "grounded": bool(chunks)}}
+    # Every backend is held to the same rule: only claims whose quotes occur in the documents.
+    supported, report = verify(analysis, resume, jd)
+    if validate_analysis(supported):
+        raise InvalidModelOutput()  # no supported strength left
+    citations = {"checked": report.checked + removed_before, "removed": len(report.removed) + removed_before}
+    return {"result": supported, "metadata": {"backend": BACKEND, "grounded": bool(chunks), "citations": citations}}
 
 
 def _infer(req):
@@ -128,7 +139,8 @@ def _stream_inference(req):
         if key is None:
             events.put({"reset": True})
         elif key in ("fitScore", "verdict", "strengths", "gaps", "interviewQuestions"):
-            events.put({"field": key, "value": value})
+            # Drafts are held to the same evidence rule as the final answer.
+            events.put({"field": key, "value": supported_items(key, value, req.resume, req.jd)})
 
     def produce():
         token = publish_field.set(field)

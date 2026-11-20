@@ -6,17 +6,28 @@ import { renderReportHtml, esc } from "../src/report/template.ts";
 import { createPdfRenderer } from "../src/report/pdf.ts";
 
 const fixture = JSON.parse(readFileSync(fileURLToPath(new URL("../../../packages/shared/fixtures/sample-analysis.json", import.meta.url)), "utf8"));
-const item = (overrides: object = {}, label = "Candidate.pdf") => ({ label, envelope: { result: { ...fixture, ...overrides }, metadata: { backend: "hosted" as const, grounded: true } } });
+const item = (overrides: object = {}, label = "Candidate.pdf") => ({ label, envelope: { result: { ...fixture, ...overrides }, metadata: { backend: "hosted" as const, grounded: true, citations: { checked: 7, removed: 0 } } } });
 
 test("template escapes every untrusted value and contains no script or external resource", () => {
   assert.equal(esc(`<a href="x">'&'</a>`), "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;");
   const html = renderReportHtml({ title: "<b>Role</b>", generatedAt: new Date(0), items: [
-    item({ verdict: "<script>alert(1)</script>", strengths: ["<img src=x onerror=alert(1)>"] }, "<i>name</i>.pdf")] });
+    item({ verdict: "<script>alert(1)</script>", strengths: [{ text: "<img src=x onerror=alert(1)>", evidence: "<svg onload=alert(1)> quoted" }] }, "<i>name</i>.pdf")] });
   assert.ok(!/<script/i.test(html), "no script elements");
   assert.ok(!/<img/i.test(html), "no image elements");
   assert.ok(!/(src|href)=["']?https?:/i.test(html), "no external resources");
   assert.ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;") && html.includes("&lt;i&gt;name&lt;/i&gt;.pdf"));
+  assert.ok(!/<svg onload/i.test(html) && html.includes("&lt;svg onload=alert(1)&gt; quoted"));
   assert.match(html, /Content-Security-Policy" content="default-src 'none'/);
+});
+
+test("each claim shows its quote and the report states how many were verified", () => {
+  const clean = renderReportHtml({ generatedAt: new Date(0), items: [item()] });
+  assert.ok(clean.includes("All 7 claims quote the documents"));
+  assert.ok(clean.includes("Resume: “partitioning on a 40M-row table by month”"));
+  assert.ok(clean.includes("Job description: “Infrastructure is managed with Terraform”"));
+  const trimmed = renderReportHtml({ generatedAt: new Date(0), items: [{ label: "x.pdf", envelope: {
+    result: fixture, metadata: { backend: "hosted" as const, grounded: true, citations: { checked: 8, removed: 1 } } } }] });
+  assert.ok(trimmed.includes("7 claims quote the documents · 1 unsupported claim removed"));
 });
 
 test("single report has no overview; batch report adds one and a page per candidate", () => {

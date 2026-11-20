@@ -8,9 +8,9 @@ from inference import server, llm
 from inference.prompt import build_chat_prompt, build_user_turn
 
 TOKEN = "a" * 64
-INPUT = {"resume": "Backend engineer building Python services with SQL and testing. " * 3,
-         "jd": "Seeking a Python engineer for backend services and testing. " * 3}
 FIXTURE = json.loads((Path(__file__).resolve().parents[3] / "packages/shared/fixtures/sample-analysis.json").read_text())
+# The fixture quotes these documents, so it passes citation verification unchanged.
+INPUT = json.loads((Path(__file__).resolve().parents[3] / "packages/shared/fixtures/sample-documents.json").read_text())
 
 @pytest.fixture
 def client(monkeypatch):
