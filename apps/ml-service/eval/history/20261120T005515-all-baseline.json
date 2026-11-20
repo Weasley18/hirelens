@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "timestamp": "2026-11-20T00:55:15+00:00",
+  "commit": null,
+  "mode": "direct",
+  "subset": "all",
+  "repeat": 5,
+  "backend": "hosted",
+  "model": "gpt-6-luna",
+  "cases": 24,
+  "passed": 21,
+  "passRate": 0.875,
+  "analyses": 120,
+  "errors": 0,
+  "flagged": [
+    {
+      "id": "very-senior",
+      "problems": [
+        "score varied 42-58 across 5 runs"
+      ]
+    },
+    {
+      "id": "employment-gap",
+      "problems": [
+        "score varied 58-70 across 5 runs"
+      ]
+    },
+    {
+      "id": "underrepresented-domain",
+      "problems": [
+        "score varied 58-70 across 5 runs"
+      ]
+    }
+  ],
+  "fairness": {
+    "spreads": {
+      "age": 2.8,
+      "break": 0.4,
+      "name": 0.6
+    },
+    "failures": []
+  },
+  "scoreSpread": {
+    "mean": 6.83,
+    "max": 16
+  },
+  "citations": {
+    "checked": 0,
+    "removed": 0,
+    "supportRate": null
+  },
+  "latencySeconds": {
+    "p50": null,
+    "p95": null
+  },
+  "costUsd": null,
+  "tokens": null,
+  "note": "Seeded from the first full streaming run (eval-results.json), before citations and usage tracking existed."
+}
