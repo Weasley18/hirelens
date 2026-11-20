@@ -26,8 +26,12 @@ CMD ["npx", "prisma", "migrate", "deploy", "--schema", "apps/api/prisma/schema.p
 FROM node:22-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Chromium renders PDF reports (Puppeteer's own Chrome download has no Linux ARM build).
+# Liberation and DejaVu give the report Helvetica/Arial-metric fonts and broad Unicode coverage.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+       chromium fonts-liberation fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
+ENV CHROMIUM_PATH=/usr/bin/chromium
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/

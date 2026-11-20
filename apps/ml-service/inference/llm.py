@@ -22,6 +22,7 @@ from typing import Any
 
 from common import extract_json
 from inference.limits import CONTEXT_TOKENS, OUTPUT_TOKENS
+from inference.progress import FieldReader, publish_field
 from inference.prompt import build_chat_prompt
 from inference.skills import extract_skills, jd_only_skills
 
@@ -62,8 +63,17 @@ def _generate_gguf(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
         max_tokens=MAX_TOKENS,
         temperature=TEMPERATURE,
         stop=["<|im_end|>"],
+        stream=bool(publish_field.get()),
     )
 
+    if publish_field.get():
+        reader = FieldReader()
+        parts = []
+        for event in output:
+            chunk = event["choices"][0]["text"]
+            parts.append(chunk)
+            reader.feed(chunk)
+        return extract_json("".join(parts))
     return extract_json(output["choices"][0]["text"])
 
 

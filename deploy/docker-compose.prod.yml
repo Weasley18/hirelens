@@ -11,17 +11,19 @@
 # Redis runs here, private to this network, with persistence disabled on purpose: it holds
 # candidate documents and results that must disappear on expiry (see SECURITY.md).
 
+# The API and worker run the same image. Only the api service builds it: if both declared a
+# build, Compose would build the image twice in parallel and fail on the shared tag.
 x-app: &app
   image: hirelens-api:${APP_REVISION:?set APP_REVISION to the git commit you are deploying}
-  build:
-    context: ..
-    dockerfile: apps/api/Dockerfile
-    target: runtime
   env_file: production.env
   environment:
     NODE_ENV: production
     REDIS_URL: redis://redis:6379
     ML_SERVICE_URL: http://ml:8000
+    # The root filesystem is read-only; Chromium (PDF reports) keeps its profile and caches in /tmp.
+    HOME: /tmp
+    XDG_CONFIG_HOME: /tmp
+    XDG_CACHE_HOME: /tmp
   restart: unless-stopped
   depends_on: [redis]
   read_only: true
@@ -32,6 +34,10 @@ x-app: &app
 services:
   api:
     <<: *app
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+      target: runtime
     expose: ["3000"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -41,6 +47,7 @@ services:
 
   worker:
     <<: *app
+    pull_policy: never   # uses the image the api service builds
     command: ["node", "dist/worker.js"]
     depends_on:
       redis: { condition: service_started }

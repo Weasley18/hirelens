@@ -4,8 +4,10 @@ import { connection, analysisQueue } from "./queue.js";
 import { PrivateStore } from "./privacy.js";
 import { statsRoutes } from "./routes/stats.js";
 import { prisma } from "./db.js";
+import { createPdfRenderer } from "./report/pdf.js";
 
-const app = await buildApp({ queue: analysisQueue, store: new PrivateStore(connection) }, {
+const renderPdf = env.CHROMIUM_PATH ? createPdfRenderer({ executablePath: env.CHROMIUM_PATH }) : undefined;
+const app = await buildApp({ queue: analysisQueue, store: new PrivateStore(connection), renderPdf }, {
   origins: env.CORS_ORIGIN.split(",").map(s => s.trim()), redis: connection,
   trustProxy: env.TRUST_PROXY.split(",").map(s => s.trim()).filter(Boolean), production: env.NODE_ENV === "production",
   readiness: async () => {
@@ -16,7 +18,7 @@ const app = await buildApp({ queue: analysisQueue, store: new PrivateStore(conne
 });
 await app.register(statsRoutes);
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, async () => {
-  await app.close(); await analysisQueue.close(); connection.disconnect(); await prisma.$disconnect();
+  await app.close(); await renderPdf?.close(); await analysisQueue.close(); connection.disconnect(); await prisma.$disconnect();
 });
 try { await app.listen({ port: env.PORT, host: "0.0.0.0" }); }
 catch { console.error("API startup failed"); process.exit(1); }
