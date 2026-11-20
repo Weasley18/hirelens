@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Queue } from "bullmq";
-import { AnalyzeRequestSchema } from "@hirelens/shared";
+import { AnalyzeRequestSchema, AnalysisResultSchema } from "@hirelens/shared";
 import { newToken, RETENTION_SECONDS, type PrivateStore } from "../privacy.js";
 import { mapJobState } from "../result.js";
 
@@ -32,6 +32,16 @@ export async function analyzeRoutes(app: FastifyInstance, { queue, store }: Anal
     return reply.code(202).send({ jobId, accessToken, expiresIn: RETENTION_SECONDS });
   });
 
+  app.post<{ Params: { jobId: string } }>("/analyze/:jobId/preview", async (request, reply) => {
+    const id = request.params.jobId;
+    const token = /^Bearer ([a-f0-9]{64})$/.exec(request.headers.authorization ?? "")?.[1];
+    const preview = AnalysisResultSchema.partial().safeParse(request.body);
+    if (!validId(id) || !token || !preview.success || !(await store.acceptPreview(id, token, preview.data))) {
+      return reply.code(404).send({ error: "Analysis unavailable." });
+    }
+    return reply.code(204).send();
+  });
+
   app.get<{ Params: { jobId: string } }>("/analyze/:jobId", async (request, reply) => {
     const id = request.params.jobId;
     if (!validId(id) || !(await store.authorized(id, request.headers.authorization))) {
@@ -40,10 +50,18 @@ export async function analyzeRoutes(app: FastifyInstance, { queue, store }: Anal
     const result = await store.result(id);
     if (result) return { status: "done", ...result };
     const job = await queue.getJob(id);
-    if (!job) return { status: "failed", error: "The analysis did not finish. Try again." };
-    const status = mapJobState(await job.getState());
-    if (status === "failed" || status === "done") return { status: "failed", error: job.failedReason === "Documents exceed model limits" ? "The documents exceed the model’s limits. Shorten them and submit again." : "The analysis did not finish. Try again." };
-    return { status };
+    const status = job ? mapJobState(await job.getState()) : "failed";
+    if (status === "failed" || status === "done") {
+      // The worker can finish and remove the queue entry between the two reads.
+      const completed = await store.result(id);
+      if (completed) return { status: "done", ...completed };
+      const error = job?.failedReason === "Documents exceed model limits"
+        ? "The documents exceed the model’s limits. Shorten them and submit again."
+        : "The analysis did not finish. Try again.";
+      return { status: "failed", error };
+    }
+    const preview = status === "active" ? await store.preview(id) : null;
+    return preview ? { status, preview } : { status };
   });
 
   app.delete<{ Params: { jobId: string } }>("/analyze/:jobId", async (request, reply) => {

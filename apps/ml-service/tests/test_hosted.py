@@ -241,3 +241,66 @@ def test_strict_schema_restates_dropped_limits_for_the_model():
     assert "120 characters" in schema["properties"]["strengths"]["items"]["description"]
     assert "1-8 items" in schema["properties"]["strengths"]["description"]
     assert "maxLength" not in json.dumps(schema)
+
+
+@pytest.mark.parametrize("name", ["openai", "anthropic", "gemini"])
+def test_streamed_fields_precede_the_validated_final_result(monkeypatch, name):
+    monkeypatch.setenv("HOSTED_PROVIDER", name)
+    monkeypatch.setenv(hosted.KEY_VARIABLES[name], "test-key")
+    monkeypatch.setenv("ML_SERVICE_TOKEN", TOKEN)
+    monkeypatch.setattr(server, "BACKEND", "hosted")
+    monkeypatch.setattr(llm, "BACKEND", "hosted")
+    monkeypatch.setattr("rag.retrieve.retrieve_for_skills", lambda skills: [])
+    answer = json.dumps(FIXTURE)
+    parts = [answer[i:i+11] for i in range(0, len(answer), 11)]
+    if name == "openai":
+        events = [{"choices": [{"delta": {"content": text}}]} for text in parts]
+        events.append({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+    elif name == "anthropic":
+        events = [{"delta": {"partial_json": text}} for text in parts] + [{"type": "message_stop"}]
+    else:
+        events = [{"candidates": [{"content": {"parts": [{"text": text}]}}]} for text in parts]
+        events[-1]["candidates"][0]["finishReason"] = "STOP"
+
+    def open_stream(request, timeout):
+        if name == "gemini":
+            assert request.full_url.endswith(":streamGenerateContent?alt=sse")
+        else:
+            assert json.loads(request.data)["stream"]
+        return io.BytesIO(b"".join(b"data: " + json.dumps(event).encode() + b"\n\n" for event in events))
+
+    monkeypatch.setattr(hosted.urllib.request, "urlopen", open_stream)
+    with TestClient(server.app) as client:
+        res = client.post("/infer", json={"resume": RESUME * 2, "jd": JD * 2},
+                          headers={"Authorization": "Bearer " + TOKEN, "Accept": "application/x-ndjson"})
+    frames = [json.loads(line) for line in res.text.splitlines()]
+    assert frames[-1]["done"]["result"] == FIXTURE
+    assert {frame["field"]: frame["value"] for frame in frames[:-1]} == FIXTURE
+
+
+def test_lambda_progress_and_final_result_use_independent_transports(monkeypatch):
+    from inference import lambda_handler
+    from inference.progress import publish_field
+    from unittest.mock import Mock
+
+    def analysis(resume, jd):
+        publish_field.get()("verdict", FIXTURE["verdict"])
+        return {"result": FIXTURE, "metadata": {"backend": "hosted", "grounded": True}}
+
+    connection = Mock()
+    connection.getresponse.return_value.status = 204
+    monkeypatch.setattr(lambda_handler.http.client, "HTTPSConnection", lambda host, timeout: connection)
+    monkeypatch.setattr(server, "analyze_documents", analysis)
+    monkeypatch.setenv("ML_SERVICE_TOKEN", TOKEN)
+    event = {
+        "version": "2.0", "rawPath": "/infer", "requestContext": {"http": {"method": "POST", "path": "/infer", "sourceIp": "127.0.0.1"}},
+        "body": json.dumps({"resume": RESUME * 2, "jd": JD * 2}), "headers": {"content-type": "application/json", "authorization": "Bearer " + TOKEN},
+        "hirelensProgress": {"host": "test.example", "jobId": "00000000-0000-4000-8000-000000000000", "token": "c" * 64},
+    }
+    for failure in (None, OSError()):
+        connection.request.side_effect = failure
+        response = lambda_handler.handler(event, {})
+        assert json.loads(response["body"])["result"] == FIXTURE
+        assert json.loads(connection.request.call_args.kwargs["body"]) == {"verdict": FIXTURE["verdict"]}
+        assert connection.request.call_args.kwargs["headers"]["Authorization"] == "Bearer " + "c" * 64
+        assert publish_field.get() is None

@@ -10,7 +10,7 @@ export class InvalidDocumentsError extends Error {
 }
 export function createProcessor(deps: {
   store: PrivateStore;
-  infer: (input: AnalyzeRequest) => Promise<unknown>;
+  infer: (input: AnalyzeRequest, jobId: string) => Promise<unknown>;
   recordCompletion: (id: string) => Promise<unknown>;
   production?: boolean;
 }) {
@@ -26,7 +26,7 @@ export function createProcessor(deps: {
         return;
       }
       const input = AnalyzeRequestSchema.parse(await deps.store.input(id));
-      const result = AnalysisEnvelopeSchema.parse(await deps.infer(input));
+      const result = AnalysisEnvelopeSchema.parse(await deps.infer(input, id));
       if (deps.production && !PRODUCTION_BACKENDS.includes(result.metadata.backend)) throw new Error("Invalid backend");
       if (await deps.store.save(id, result)) {
         await deps.recordCompletion(id).catch(() => { throw new TransientInferenceError(); });
@@ -40,6 +40,7 @@ export function createProcessor(deps: {
       // Persist only allowlisted failure text in BullMQ, never upstream exception content.
       throw new UnrecoverableError(error instanceof InvalidDocumentsError ? "Documents exceed model limits" : "Analysis failed");
     } finally {
+      await deps.store.clearPreview(id).catch(() => console.error("Preview cleanup unavailable; TTL applies"));
       if (!retry) {
         // A Redis cleanup failure must not replace the classified job failure.
         await deps.store.clearInput(id).catch(() => console.error("Input cleanup unavailable; TTL applies"));

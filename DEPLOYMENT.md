@@ -149,3 +149,9 @@ project → GitHub*, pick the repo and deploy; the build settings and the `VITE_
 
 Work through "Staging rollout checks" in OPERATIONS.md, run `python -m eval.run_eval` against the deployed API
 (`API_URL=https://api.example.com`), and set up the alerts listed there.
+
+The HTTP worker receives assessment fields directly from the ML service. With private Lambda
+inference, set `API_DOMAIN` on the worker to the API’s public HTTPS hostname (already set by the
+VM deployment examples). Lambda sends draft fields to that host with a write-only credential
+for the current job. If the host is unavailable or omitted, the final report still arrives through
+the existing private invocation.

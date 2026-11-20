@@ -2,6 +2,7 @@ import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { Worker } from "bullmq";
 import IORedis from "ioredis";
 import { type AnalyzeRequest } from "@hirelens/shared";
+import { readInferenceResponse } from "./inference-response.js";
 import { env } from "./env.js";
 import { prisma } from "./db.js";
 import { connection, analysisQueue, ANALYSIS_QUEUE } from "./queue.js";
@@ -12,11 +13,14 @@ const lambda = new LambdaClient({ maxAttempts: 1 });
 const store = new PrivateStore(connection);
 const workerConnection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
 workerConnection.on("error", () => console.error("Worker Redis unavailable"));
-async function infer(input: AnalyzeRequest): Promise<unknown> {
+async function infer(input: AnalyzeRequest, id: string): Promise<unknown> {
     let raw: string;
     if (env.ML_LAMBDA_FUNCTION) {
       // Private IAM invocation avoids both a public model endpoint and gateway timeouts.
-      const event = { version: "2.0", routeKey: "POST /infer", rawPath: "/infer", rawQueryString: "",
+      const progress = env.API_DOMAIN ? {
+        host: env.API_DOMAIN, jobId: id, token: await store.beginPreview(id),
+      } : undefined;
+      const event = { hirelensProgress: progress, version: "2.0", routeKey: "POST /infer", rawPath: "/infer", rawQueryString: "",
         headers: { "content-type": "application/json", authorization: `Bearer ${env.ML_SERVICE_TOKEN}` },
         requestContext: { http: { method: "POST", path: "/infer", sourceIp: "127.0.0.1", protocol: "HTTP/1.1" } },
         body: JSON.stringify(input), isBase64Encoded: false };
@@ -31,21 +35,13 @@ async function infer(input: AnalyzeRequest): Promise<unknown> {
       raw = payload.body;
     } else {
       const response = await fetch(`${env.ML_SERVICE_URL}/infer`, {
-        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.ML_SERVICE_TOKEN}` },
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson", Authorization: `Bearer ${env.ML_SERVICE_TOKEN}` },
         body: JSON.stringify(input), signal: AbortSignal.timeout(env.INFERENCE_TIMEOUT_SECONDS * 1000), redirect: "error",
       }).catch(() => { throw new TransientInferenceError(); });
       if ([429, 500, 503, 504].includes(response.status)) throw new TransientInferenceError();
       if (response.status === 422) throw new InvalidDocumentsError();
       if (!response.ok) throw new Error("Inference failed");
-      const reader = response.body!.getReader();
-      const chunks: Uint8Array[] = []; let size = 0;
-      while (true) {
-        const { done, value } = await reader.read().catch(() => { throw new TransientInferenceError(); }); if (done) break;
-        size += value.length;
-        if (size > 100_000) { await reader.cancel(); throw new Error("Oversized response"); }
-        chunks.push(value);
-      }
-      raw = Buffer.concat(chunks).toString("utf8");
+      return readInferenceResponse(response, preview => store.savePreview(id, preview));
     }
     return JSON.parse(raw);
 }

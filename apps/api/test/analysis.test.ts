@@ -94,3 +94,24 @@ describe("mapJobState", () => {
     assert.equal(mapJobState(undefined), "queued");
   });
 });
+
+test("worker decodes split UTF-8 fields, clears retried drafts and accepts a validated final envelope", async () => {
+  const { readInferenceResponse } = await import("../src/inference-response.ts");
+  const result = { result: fixture, metadata: { backend: "hosted", grounded: true } };
+  const verdict = "Expérience aligned with the role.";
+  const frames = [{ field: "fitScore", value: 500 }, { field: "verdict", value: verdict },
+    { reset: true }, { field: "fitScore", value: 74 }, { done: result }];
+  const bytes = new TextEncoder().encode(frames.map(frame => JSON.stringify(frame)).join("\n") + "\n");
+  const body = new ReadableStream({ start(controller) {
+    for (let index = 0; index < bytes.length; index += 3) controller.enqueue(bytes.slice(index, index + 3));
+    controller.close();
+  } });
+  const previews: unknown[] = [];
+  const receive = async (preview: unknown) => { previews.push(preview); };
+  const headers = { "Content-Type": "application/x-ndjson" };
+  assert.deepEqual(await readInferenceResponse(new Response(body, { headers }), receive), result);
+  assert.deepEqual(previews, [{ verdict }, {}, { fitScore: 74 }]);
+  // Older ML services use a single JSON response.
+  assert.deepEqual(await readInferenceResponse(Response.json(result), receive), result);
+  await assert.rejects(readInferenceResponse(new Response('{"reset":true}\n', { headers }), receive), /temporarily unavailable/);
+});

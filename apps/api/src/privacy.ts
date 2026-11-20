@@ -1,12 +1,12 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type IORedis from "ioredis";
-import type { AnalyzeRequest, AnalysisEnvelope } from "@hirelens/shared";
+import type { AnalyzeRequest, AnalysisEnvelope, AnalysisResult } from "@hirelens/shared";
 
 export const RETENTION_SECONDS = 3600;
 export const INPUT_RETENTION_SECONDS = 900;
 export const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 export const newToken = () => randomBytes(32).toString("hex");
-export const keys = (id: string) => ({ auth: `private:${id}:auth`, input: `private:${id}:input`, result: `private:${id}:result` });
+export const keys = (id: string) => ({ auth: `private:${id}:auth`, input: `private:${id}:input`, result: `private:${id}:result`, preview: `private:${id}:preview`, writer: `private:${id}:writer` });
 
 export class PrivateStore {
   constructor(private redis: IORedis, private capacity = 2) {}
@@ -41,13 +41,41 @@ export class PrivateStore {
   }
   async clearInput(id: string) { await this.redis.del(keys(id).input); }
   async save(id: string, result: AnalysisEnvelope) {
+    return this.savePrivate(id, keys(id).result, JSON.stringify(result));
+  }
+  async savePreview(id: string, preview: Partial<AnalysisResult>) {
+    return this.savePrivate(id, keys(id).preview, JSON.stringify(preview));
+  }
+  async preview(id: string): Promise<Partial<AnalysisResult> | null> {
+    const raw = await this.redis.get(keys(id).preview);
+    return raw ? JSON.parse(raw) : null;
+  }
+  async beginPreview(id: string) {
+    const token = newToken();
+    await this.savePrivate(id, keys(id).writer, tokenHash(token));
+    return token;
+  }
+  async acceptPreview(id: string, token: string, preview: Partial<AnalysisResult>) {
+    const k = keys(id);
+    // An earlier Lambda invocation cannot restore a deleted or superseded draft.
+    return Number(await this.redis.eval(`
+      local ttl = redis.call('PTTL', KEYS[1])
+      if ttl <= 0 or redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
+      redis.call('SET', KEYS[3], ARGV[2], 'PX', ttl)
+      return 1`, 3, k.auth, k.writer, k.preview, tokenHash(token), JSON.stringify(preview))) === 1;
+  }
+  async clearPreview(id: string) {
+    const k = keys(id);
+    await this.redis.del(k.preview, k.writer);
+  }
+  private async savePrivate(id: string, key: string, value: string) {
     const k = keys(id);
     // An expired or deleted capability must never be resurrected by an in-flight worker.
     return Number(await this.redis.eval(`
       local ttl = redis.call('PTTL', KEYS[1])
       if ttl <= 0 then return 0 end
       redis.call('SET', KEYS[2], ARGV[1], 'PX', ttl)
-      return 1`, 2, k.auth, k.result, JSON.stringify(result))) === 1;
+      return 1`, 2, k.auth, key, value)) === 1;
   }
   async result(id: string): Promise<AnalysisEnvelope | null> {
     const raw = await this.redis.get(keys(id).result);

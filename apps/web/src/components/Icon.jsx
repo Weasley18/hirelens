@@ -1,4 +1,6 @@
 const paths = {
+    upload: <><path d="M12 16V3m-5 5 5-5 5 5M4 16v4h16v-4"/></>,
+    download: <><path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4"/></>,
     arrow: <><path d="M4 12h15M13 5l7 7-7 7"/></>,
     file: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></>,
     briefcase: <><rect x="3" y="7" width="18" height="14" rx="3"/><path d="M8 7V4h8v3M3 12c5 4 13 4 18 0M12 12v4"/></>,

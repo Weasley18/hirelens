@@ -253,3 +253,27 @@ test("production ML URL: HTTPS, or an internal container name only", async () =>
     assert.equal(isAllowedProductionMlUrl(bad), false, bad);
   }
 });
+
+test("private previews belong to the current invocation and expire with the analysis", async () => {
+  const { app, store } = await setup();
+  try {
+    const { jobId, accessToken } = (await app.inject({ method: "POST", url: "/analyze", payload: input })).json();
+    const preview = { verdict: envelope.result.verdict };
+    const poll = (token: string) => app.inject({ url: `/analyze/${jobId}`, headers: { authorization: `Bearer ${token}` } });
+    const post = (token: string, payload = preview) => app.inject({
+      method: "POST", url: `/analyze/${jobId}/preview`, headers: { authorization: `Bearer ${token}` }, payload,
+    });
+    const first = await store.beginPreview(jobId);
+    const writer = await store.beginPreview(jobId);
+    assert.equal((await post(first)).statusCode, 404);
+    assert.equal((await post(accessToken)).statusCode, 404);
+    assert.equal((await poll(writer)).statusCode, 404);
+    assert.equal((await post(writer, { verdict: "" })).statusCode, 404);
+    assert.equal((await post(writer)).statusCode, 204);
+    assert.deepEqual((await poll(accessToken)).json().preview, preview);
+    assert.ok(await redis.ttl(keys(jobId).preview) > 0);
+    await store.remove(jobId);
+    assert.equal((await post(writer)).statusCode, 404);
+    assert.equal(await store.savePreview(jobId, preview), false);
+  } finally { await app.close(); }
+});

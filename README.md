@@ -1,8 +1,10 @@
 # HireLens
 
-Compare a pasted resume with a job description to get supported strengths, gaps to explore,
-and interview questions. HireLens is an anonymous assessment workspace: results are temporary,
-and every assessment needs human review.
+Upload one or more resume PDFs and a single job description PDF, or paste document text.
+HireLens reads selectable PDF text in the browser and assesses resumes in selection order.
+Run analysis opens one results tab per resume, with strengths, gaps and interview questions.
+Download an individual or combined text report before closing the browser tab. Results
+are temporary and every assessment needs human review.
 
 The application includes a React (JavaScript/JSX + Vite) frontend, Fastify API, Redis/BullMQ worker, PostgreSQL/pgvector
 knowledge base, and Python inference service. The inference service has three backends:

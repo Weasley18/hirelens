@@ -35,6 +35,7 @@ from typing import Any
 from jsonschema import Draft7Validator
 
 from common import extract_json, load_schema, validate_analysis
+from inference.progress import FieldReader, publish_field
 from inference.prompt import HOSTED_GUIDANCE, SYSTEM_PROMPT, build_user_turn
 
 PROVIDERS = ("openai", "anthropic", "gemini")
@@ -167,6 +168,11 @@ def system_prompt(include_schema: bool) -> str:
 
 
 def _post(url: str, body: dict, headers: dict[str, str]) -> dict:
+    if publish_field.get():
+        if provider() == "gemini":
+            url = url.replace(":generateContent", ":streamGenerateContent?alt=sse")
+        else:
+            body["stream"] = True
     request = urllib.request.Request(
         url, data=json.dumps(body).encode(), method="POST",
         headers={"Content-Type": "application/json", **headers},
@@ -174,6 +180,8 @@ def _post(url: str, body: dict, headers: dict[str, str]) -> dict:
     remaining = _deadline.get() - time.monotonic() if _deadline.get() else timeout_seconds()
     try:
         with urllib.request.urlopen(request, timeout=max(remaining, 1.0)) as response:
+            if publish_field.get():
+                return _stream_answer(response)
             return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         # The body is deliberately dropped: some providers echo parts of the request in errors.
@@ -184,6 +192,53 @@ def _post(url: str, body: dict, headers: dict[str, str]) -> dict:
         raise HostedModelError(reason) from None
     except (http.client.HTTPException, json.JSONDecodeError, UnicodeDecodeError):
         raise HostedModelError("unreadable response") from None
+
+
+def _stream_answer(response):
+    reader = FieldReader()
+    parts = []
+    size = 0
+    finished = False
+    for line in response:
+        if time.monotonic() >= _deadline.get():
+            raise HostedModelError("timeout")
+        if not line.startswith(b"data:"):
+            continue
+        data = line[5:].strip()
+        if data == b"[DONE]":
+            break
+        event = json.loads(data)
+        if "error" in event:
+            raise HostedModelError("provider stream failed")
+        if provider() == "openai":
+            choices = event.get("choices", [])
+            if not choices:
+                continue
+            choice = choices[0]
+            if choice.get("delta", {}).get("refusal"):
+                raise HostedModelError("refused")
+            chunk = choice.get("delta", {}).get("content") or ""
+            finished = choice.get("finish_reason") == "stop"
+        elif provider() == "anthropic":
+            chunk = event.get("delta", {}).get("partial_json", "")
+            if event.get("type") == "message_stop":
+                finished = True
+        else:
+            candidate = (event.get("candidates") or [{}])[0]
+            chunk = "".join(p.get("text", "") for p in candidate.get("content", {}).get("parts", []) if not p.get("thought"))
+            finished = candidate.get("finishReason") == "STOP"
+        size += len(chunk)
+        if size > 32000:
+            raise HostedModelError("oversized answer")
+        if chunk:
+            parts.append(chunk)
+            reader.feed(chunk)
+    if not finished:
+        raise HostedModelError("incomplete answer")
+    try:
+        return extract_json("".join(parts))
+    except ValueError:
+        raise HostedModelError("answer was not JSON") from None
 
 
 def _call_anthropic(user_turn: str) -> dict:
@@ -204,6 +259,8 @@ def _call_anthropic(user_turn: str) -> dict:
         },
         {"x-api-key": _api_key(), "anthropic-version": "2023-06-01"},
     )
+    if publish_field.get():
+        return payload
     for block in payload.get("content", []):
         if block.get("type") == "tool_use" and block.get("name") == TOOL_NAME:
             return block.get("input") or {}
@@ -231,6 +288,8 @@ def _call_openai(user_turn: str) -> dict:
         body["temperature"] = TEMPERATURE  # sampling settings are rejected while reasoning is on
     payload = _post("https://api.openai.com/v1/chat/completions", body,
                     {"Authorization": f"Bearer {_api_key()}"})
+    if publish_field.get():
+        return payload
     try:
         choice = payload["choices"][0]
         message = choice["message"]
@@ -260,6 +319,8 @@ def _call_gemini(user_turn: str) -> dict:
         },
         {"x-goog-api-key": _api_key()},
     )
+    if publish_field.get():
+        return payload
     try:
         text = "".join(p.get("text", "") for p in payload["candidates"][0]["content"]["parts"])
         return extract_json(text)
@@ -290,6 +351,8 @@ def generate(resume: str, jd: str, chunks: list[dict]) -> dict[str, Any]:
             if attempt > 1 and deadline - time.monotonic() < MIN_ATTEMPT_SECONDS:
                 reasons.append("no time left to retry")
                 break
+            if attempt > 1 and publish_field.get():
+                publish_field.get()(None, None)
             try:
                 analysis = caller(user_turn)
             except HostedModelError as exc:
