@@ -38,7 +38,7 @@ const envelope = { result: { fitScore: 50, verdict: "Needs further assessment.",
   { question: "Describe a system you built.", targets: "Python", difficulty: "mid" as const },
   { question: "How do you test your systems?", targets: "Testing", difficulty: "mid" as const },
 ] }, metadata: { backend: "stub" as const, grounded: false } };
-async function setup() {
+async function setup(renderPdf?: (html: string) => Promise<Uint8Array>) {
   await redis.flushdb(); // Only the isolated, socket-only Redis created above.
   const jobs = new Map<string, any>();
   const queue = {
@@ -46,7 +46,7 @@ async function setup() {
     getJob: async (id: string) => jobs.get(id), getJobCounts: async () => ({ waiting: 0, active: 0 }),
   } as unknown as AnalysisDependencies["queue"];
   const store = new PrivateStore(redis, 100);
-  const app = await buildApp({ queue, store }, { origins: ["http://localhost:3001"], redis });
+  const app = await buildApp({ queue, store, renderPdf }, { origins: ["http://localhost:3001"], redis });
   return { app, store };
 }
 
@@ -275,5 +275,60 @@ test("private previews belong to the current invocation and expire with the anal
     await store.remove(jobId);
     assert.equal((await post(writer)).statusCode, 404);
     assert.equal(await store.savePreview(jobId, preview), false);
+  } finally { await app.close(); }
+});
+
+test("PDF reports: own finished analyses only, labels escaped, failures fall back cleanly", async () => {
+  const pages: string[] = [];
+  let fail = false;
+  const { app, store } = await setup(async html => { if (fail) throw new Error("chromium crashed"); pages.push(html); return new TextEncoder().encode("%PDF-1.7 test"); });
+  try {
+    const first = (await app.inject({ method: "POST", url: "/analyze", payload: input })).json();
+    const second = (await app.inject({ method: "POST", url: "/analyze", payload: input })).json();
+    const hostile = { ...envelope, result: { ...envelope.result, verdict: "<script>alert(1)</script> Partial match." } };
+    await store.save(first.jobId, envelope);
+    await store.save(second.jobId, hostile);
+    const item = (job: { jobId: string; accessToken: string }, label: string) => ({ jobId: job.jobId, accessToken: job.accessToken, label });
+    const report = (payload: unknown) => app.inject({ method: "POST", url: "/reports", payload: payload as object });
+
+    const ok = await report({ title: "Backend <Engineer>", items: [item(first, "Priya.pdf"), item(second, "<img src=x>.pdf")] });
+    assert.equal(ok.statusCode, 200);
+    assert.equal(ok.headers["content-type"], "application/pdf");
+    assert.match(String(ok.headers["content-disposition"]), /attachment; filename="HireLens-batch-report.pdf"/);
+    assert.equal(ok.headers["cache-control"], "no-store");
+    assert.equal(ok.body, "%PDF-1.7 test");
+    const html = pages.at(-1)!;
+    assert.ok(html.includes("&lt;img src=x&gt;.pdf") && html.includes("Backend &lt;Engineer&gt;"));
+    assert.ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;") && !html.includes("<script>alert(1)"));
+
+    // Someone else's analysis, a wrong token, or an unfinished analysis is never rendered.
+    const wrongToken = { ...item(first, "x"), accessToken: "0".repeat(64) };
+    assert.equal((await report({ items: [item(second, "ok"), wrongToken] })).statusCode, 404);
+    const unfinished = (await app.inject({ method: "POST", url: "/analyze", payload: input })).json();
+    assert.equal((await report({ items: [item(unfinished, "pending")] })).statusCode, 404);
+    await store.remove(first.jobId);
+    assert.equal((await report({ items: [item(first, "deleted")] })).statusCode, 404);
+    assert.equal(pages.length, 1);
+
+    // Request shape: no content of its own, at most ten analyses, labels are short.
+    assert.equal((await report({ items: [{ ...item(second, "x"), result: hostile.result }] })).statusCode, 400);
+    assert.equal((await report({ items: Array.from({ length: 11 }, () => item(second, "x")) })).statusCode, 400);
+    assert.equal((await report({ items: [item(second, "x".repeat(121))] })).statusCode, 400);
+    assert.equal((await report({ items: [] })).statusCode, 400);
+
+    fail = true;
+    const broken = await report({ items: [item(second, "ok")] });
+    assert.equal(broken.statusCode, 503);
+    assert.doesNotMatch(broken.body, /chromium/);
+  } finally { await app.close(); }
+});
+
+test("PDF reports are unavailable (503) when no renderer is configured", async () => {
+  const { app, store } = await setup();
+  try {
+    const job = (await app.inject({ method: "POST", url: "/analyze", payload: input })).json();
+    await store.save(job.jobId, envelope);
+    const res = await app.inject({ method: "POST", url: "/reports", payload: { items: [{ jobId: job.jobId, accessToken: job.accessToken, label: "a" }] } });
+    assert.equal(res.statusCode, 503);
   } finally { await app.close(); }
 });

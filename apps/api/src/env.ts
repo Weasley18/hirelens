@@ -11,6 +11,9 @@ const EnvSchema = z.object({
   ML_SERVICE_URL: z.string().url().default("http://localhost:8000"),
   API_DOMAIN: z.string().regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i).optional(),
   ML_LAMBDA_FUNCTION: z.string().optional(),
+  // Chromium for PDF reports (set in the API image). Unset: PDF requests get 503 and the web app
+  // falls back to a text report.
+  CHROMIUM_PATH: z.string().optional(),
   ML_SERVICE_TOKEN: z.string().regex(/^[a-f0-9]{64}$/, "must be a random 32-byte hex token"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   CORS_ORIGIN: z.string().default("http://localhost:3001"),

@@ -161,6 +161,8 @@ test("PDF batch writes partial results, submits in order and exports both report
     expect(submissions).toEqual(resumes.map(resume => ({ resume, jd })));
     expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight && document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByRole("tab", { name: "Candidate-1.pdf" }).click();
+    // PDF service unavailable: both buttons fall back to the plain-text report.
+    await page.route(/\/reports$/, route => route.fulfill({ status: 503, json: { error: "PDF reports are unavailable." } }));
     for (const [label, filename] of [["Download report", "HireLens-Candidate-1.txt"], ["Download batch report", "HireLens-batch-report.txt"]]) {
         const waiting = page.waitForEvent("download");
         await page.getByRole("button", { name: label, exact: true }).click();
@@ -172,6 +174,25 @@ test("PDF batch writes partial results, submits in order and exports both report
         expect(text.includes("Candidate-2.pdf")).toBe(label === "Download batch report");
         expect(text.includes(secondVerdict)).toBe(label === "Download batch report");
         expect(text).not.toContain(handle.accessToken);
+    }
+    // PDF service available: the browser sends only capabilities and labels, never the analysis.
+    await page.unroute(/\/reports$/);
+    const reportRequests = [];
+    await page.route(/\/reports$/, async route => {
+        reportRequests.push(route.request().postDataJSON());
+        await new Promise(resolve => setTimeout(resolve, 300));
+        return route.fulfill({ status: 200, contentType: "application/pdf", body: "%PDF-1.7 test" });
+    });
+    for (const [label, filename, jobs] of [["Download report", "HireLens-Candidate-1.pdf", [handle]], ["Download batch report", "HireLens-batch-report.pdf", [handle, secondHandle]]]) {
+        const waiting = page.waitForEvent("download");
+        await page.getByRole("button", { name: label, exact: true }).click();
+        await expect(page.getByRole("button", { name: "Preparing PDF…" })).toBeVisible();
+        const file = await waiting;
+        expect(file.suggestedFilename()).toBe(filename);
+        expect(await readFile(await file.path(), "utf8")).toBe("%PDF-1.7 test");
+        const body = reportRequests.at(-1);
+        expect(body).toEqual({ title: "Role.pdf", items: jobs.map((job, i) => ({ jobId: job.jobId, accessToken: job.accessToken, label: `Candidate-${i + 1}.pdf` })) });
+        expect(JSON.stringify(body)).not.toContain(fixture.verdict);
     }
 });
 

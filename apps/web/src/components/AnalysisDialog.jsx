@@ -7,6 +7,7 @@ import { downloadReport } from "@/lib/report";
 export default function AnalysisDialog({ batch, roleName, onClose, onClear }) {
     const { rows, busy, deleting, deleteError } = batch;
     const [selected, setSelected] = useState(null);
+    const [preparing, setPreparing] = useState(null);
     const dialog = useRef(null);
     const tabs = useRef([]);
     const processing = rows.findIndex(row => !["Complete", "Failed", "Deleted", "Pending"].includes(row.status));
@@ -29,6 +30,10 @@ export default function AnalysisDialog({ batch, roleName, onClose, onClear }) {
     }
     const result = row?.result;
     const finished = rows.filter(item => item.result).length;
+    async function download(which, reportRows) {
+        setPreparing(which);
+        try { await downloadReport(reportRows, roleName); } finally { setPreparing(null); }
+    }
     const canRetry = row?.error && !busy && !deleting && (processing === -1 || processing === index);
     return <dialog ref={dialog} className="analysis-dialog" aria-labelledby="analysis-title" onCancel={onClose}>
         <div className="output-panel dialog-layout">
@@ -56,8 +61,10 @@ export default function AnalysisDialog({ batch, roleName, onClose, onClear }) {
             <footer className="dialog-footer">
                 <button className="dialog-action" disabled={deleting} onClick={() => onClear(false)}>{deleting ? "Deleting…" : "Delete analysis and clear documents"}</button>
                 <div className="download-actions">
-                {rows.length > 1 && !busy && pending < 0 && finished > 0 && <button className="dialog-action" onClick={() => downloadReport(rows, roleName)}>Download batch report</button>}
-                <button className="download-button" disabled={!result || deleting} onClick={() => downloadReport([row], roleName)}><Icon name="download"/>Download report</button>
+                {rows.length > 1 && !busy && pending < 0 && finished > 0 && <button className="dialog-action" disabled={!!preparing || deleting}
+                    onClick={() => download("batch", rows)}>{preparing === "batch" ? "Preparing PDF…" : "Download batch report"}</button>}
+                <button className="download-button" disabled={!result || deleting || !!preparing} aria-busy={preparing === "single"}
+                    onClick={() => download("single", [row])}><Icon name="download"/>{preparing === "single" ? "Preparing PDF…" : "Download report"}</button>
                 </div>
             </footer>
         </div>

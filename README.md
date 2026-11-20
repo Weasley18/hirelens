@@ -94,6 +94,10 @@ runtime. It does not replace building and testing the production GGUF image.
 - Transient inference failures get one retry after five seconds; invalid results fail terminally.
 - Polling tolerates temporary errors for ten minutes and can resume using **Check existing analysis**.
 - PostgreSQL stores anonymous completion records, never candidate documents or assessments.
+- **Download report** produces a designed PDF (one candidate, or a batch with an overview page),
+  rendered by the API with Puppeteer and the image's Chromium from the stored results. The browser
+  sends only each analysis's capability and display labels; the PDF is streamed and never stored.
+  Without Chromium (`CHROMIUM_PATH` unset, e.g. the 1 GB VM layout) the button falls back to a text report.
 - The `KnowledgeChunk` table is exclusively the bundled knowledge corpus. Each ingestion atomically
   replaces its full snapshot, including deleted/renamed sections; do not store unrelated data there.
 - Resumes are capped at 8,000 characters and job descriptions at 6,000, sized to fit the model's
